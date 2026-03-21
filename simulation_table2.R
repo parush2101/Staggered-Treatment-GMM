@@ -293,12 +293,10 @@ gmm_estimator <- function(dt) {
 
   # Step 2: Iterative GMM - estimate variance and re-weight
   for (iter in 1:5) {
-    residuals <- Delta - Q_H %*% beta_hat
-    # Estimate Omega_hat (variance of moment conditions)
-    Omega_hat <- crossprod(residuals) / n_did * diag(n_did)
+    residuals <- as.numeric(Delta - Q_H %*% beta_hat)
 
     # Use residual-based diagonal weighting
-    resid_sq <- as.numeric(residuals)^2
+    resid_sq <- residuals^2
     resid_sq[resid_sq < 1e-10] <- 1e-10  # floor
     A <- diag(1 / resid_sq)
 
