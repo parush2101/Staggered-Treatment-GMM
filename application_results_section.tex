@@ -1,0 +1,268 @@
+% ============================================================
+% Section: Application — Branch Banking Deregulation and
+%          Income Inequality (Beck et al., 2010)
+%
+% Required packages: booktabs, threeparttable, amsmath,
+%                    caption, multirow, geometry
+% ============================================================
+
+\section{Application: Branch Banking Deregulation and Income Inequality}
+\label{sec:application}
+
+We replicate and extend the application of \citet{beck2010} to illustrate
+the sensitivity of difference-in-differences estimates to the choice of
+estimator under staggered adoption with heterogeneous treatment effects.
+\citet{beck2010} study how intrastate branch banking deregulation affected
+income inequality across U.S.\ states from 1976 to 2006. Using a standard
+two-way fixed effects (TWFE) regression, they find a negative and
+statistically significant effect of deregulation on the log Gini
+coefficient, concluding that branch banking deregulation reduced income
+inequality. We show that this conclusion is fragile: once forbidden
+comparisons are removed and the error covariance structure is accounted
+for, the estimated effect is close to zero and statistically
+indistinguishable from it.
+
+\subsection{Data and Setting}
+
+The sample comprises 49 U.S.\ states observed annually from 1976 to 2006,
+yielding a balanced panel of 1{,}519 state-year observations. The outcome
+variable is the log Gini coefficient (\texttt{ln\_gini}). Treatment
+corresponds to the year in which a state permitted intrastate branch
+banking (\texttt{branch\_reform}). Adoption is staggered: treatment cohorts
+range from 1976 to 1999, and 12 states deregulated before the sample
+period begins and are therefore ``always treated.''
+
+We consider two samples. \textit{Panel~A} retains all 49 states, with
+the always-treated states included and handled appropriately by each
+estimator. \textit{Panel~B} restricts to the 36 states whose treatment
+falls strictly within the sample period (1977--1999), excluding
+always-treated states entirely. Panel~B provides a cleaner identification
+setting because every state has at least one pre-treatment observation,
+guaranteeing that individual counterfactual trends are identified for all
+treated cohorts.
+
+\subsection{Results}
+
+Table~\ref{tab:beck_results} reports ATT estimates and standard errors
+from eight estimators for both panels. The estimators fall into three
+groups: (i) the standard TWFE regression; (ii) four heterogeneous-robust
+estimators from the recent DiD literature---\citet{callaway2021} (CS),
+\citet{sun2021} (SA), \citet{gardner2024} (Gardner), and the flexible TWFE
+of \citet{wooldridge2025}; and (iii) our proposed GMM estimator under three
+weighting schemes---identity (GMM-OLS), diagonal inverse-covariance
+(GMM-Diag), and full inverse-covariance (GMM-Eff).
+
+%-----------------------------------------------------------------
+\begin{table}[htbp]
+\centering
+\caption{Effect of Branch Banking Deregulation on $\ln(\text{Gini})$}
+\label{tab:beck_results}
+\begin{threeparttable}
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{\textit{Panel A} (49 states)}
+ & \multicolumn{2}{c}{\textit{Panel B} (36 states)} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Estimator & ATT & SE & ATT & SE \\
+\midrule
+\multicolumn{5}{l}{\textit{Standard estimator}} \\[2pt]
+TWFE
+  & $-0.0213^{***}$ & $(0.0076)$
+  & $-0.0134^{*}$   & $(0.0071)$ \\[4pt]
+\multicolumn{5}{l}{\textit{Heterogeneous-robust estimators}} \\[2pt]
+Callaway \& Sant'Anna (2021)
+  & $-0.0101$       & $(0.0078)$
+  & $\phantom{-}0.0062$  & $(0.0053)$ \\
+Sun \& Abraham (2021)
+  & $-0.0355^{***}$ & $(0.0114)$
+  & $-0.0536^{***}$ & $(0.0063)$ \\
+Gardner et al.\ (2024)
+  & $\phantom{-}0.0195^{***}$ & $(0.0067)$
+  & $\phantom{-}0.0195^{***}$ & $(0.0067)$ \\
+Flexible TWFE (Wooldridge 2025)
+  & $\phantom{-}0.0209^{***}$ & $(0.0069)$
+  & $\phantom{-}0.0195^{***}$ & $(0.0069)$ \\[4pt]
+\multicolumn{5}{l}{\textit{Proposed GMM estimators (236 CATTs, 5{,}829 DiD moments)}} \\[2pt]
+GMM-OLS (identity weights)
+  & $\phantom{-}0.0266$       & $(0.0190)$
+  & $\phantom{-}0.0266$       & $(0.0187)$ \\
+GMM-Diag (diagonal $\Omega^{-1}$)
+  & $\phantom{-}0.0247$       & $(0.0187)$
+  & $\phantom{-}0.0247$       & $(0.0180)$ \\
+GMM-Eff (full $\Omega^{-1}$)
+  & $\phantom{-}0.0002$       & $(0.0141)$
+  & $\phantom{-}0.0007$       & $(0.0140)$ \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[flushleft]\small
+\item \textit{Notes:} Standard errors in parentheses.
+  $^{*}p<0.10$,\ $^{**}p<0.05$,\ $^{***}p<0.01$ based on two-sided $z$-tests.
+  TWFE, SA, CS, and Gardner standard errors are clustered by state.
+  GMM-OLS standard errors use the sandwich formula
+  $(Q'Q)^{-1}Q'\hat{\Omega}Q(Q'Q)^{-1}$;
+  GMM-Diag uses $(Q'AQ)^{-1}Q'A\hat{\Omega}AQ(Q'AQ)^{-1}$
+  with $A = \mathrm{diag}(\hat{\Omega})^{-1}$;
+  GMM-Eff uses the delta-method formula $(Q'\hat{\Omega}^{-1}Q)^{-1}$.
+  $\hat{\Omega}$ is estimated from autocovariances of
+  treatment-adjusted, two-way-demeaned residuals.
+  CS uses not-yet-treated states as the control group with doubly robust
+  estimation and group-level aggregation.
+  SA uses interaction-weighted aggregation; always-treated states coded
+  as never-treated ($g = \infty$) in Panel A.
+  Panel A GMM uses 37 eligible states (branch reform $\geq 1976$);
+  Panel B GMM uses all 36 states.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+%-----------------------------------------------------------------
+
+\subsection{Why Estimates Differ Across Estimators}
+\label{subsec:why_differ}
+
+The wide dispersion of estimates across Table~\ref{tab:beck_results}
+reflects three distinct sources of divergence: the bias from forbidden
+comparisons embedded in TWFE, differences in control group definition and
+aggregation across the heterogeneous-robust estimators, and differences
+in how efficiently each estimator exploits the available moment conditions.
+
+\paragraph{Forbidden comparisons and the TWFE bias.}
+By the Goodman-Bacon decomposition \citep{goodman-bacon2021}, the TWFE
+coefficient can be expressed as a variance-weighted average of all
+possible $2\times 2$ difference-in-differences (DiD) estimates. In settings
+with staggered adoption, this average includes ``forbidden comparisons''
+in which an already-treated cohort serves as the control group. These
+comparisons are biased because the control cohort's outcome trajectory
+reflects its own accumulated treatment effect, not a clean counterfactual
+for the focal cohort. In the Beck et al.\ application, the
+Goodman-Bacon decomposition reveals that approximately 86 percent of the
+total TWFE weight is assigned to forbidden comparisons involving
+already-treated states as implicit controls \citep{arora2025}. The
+strongly negative TWFE coefficient therefore does not reflect the true
+average treatment effect; it reflects the direction of bias induced by
+these contaminated comparisons.
+
+\paragraph{Heterogeneous-robust estimators.}
+The CS, Gardner, and Flexible TWFE estimators all eliminate forbidden
+comparisons by construction, yet they yield markedly different results.
+CS finds a negative but insignificant ATT in Panel A ($-0.0101$) and a
+small positive one in Panel B ($+0.0062$), consistent with a near-zero
+true effect. Gardner and Flexible TWFE, which use an imputation approach
+to estimate counterfactual outcomes from pre-treatment variation, yield
+positive and statistically significant estimates around $+0.020$ in both
+panels.
+
+The SA estimator stands apart, yielding large, negative, and highly
+significant estimates ($-0.0355$ in Panel A, $-0.0536$ in Panel B). This
+divergence is attributable to its aggregation scheme. SA produces
+interaction-weighted ATT estimates that average CATTs over event time
+rather than over cohorts. If early-treatment cohorts have systematically
+different underlying inequality trends---as is plausible for states that
+deregulated before others---the event-time weighting can amplify cohort
+composition effects. In Panel A, the inclusion of always-treated states
+as an implicit never-treated reference group further distorts the baseline
+comparison. The SA estimate should therefore be interpreted with caution
+in this application.
+
+The divergence between Gardner/Flexible TWFE (positive, $\approx+0.020$)
+and CS (near zero) reflects a subtler difference. Both eliminate
+forbidden comparisons, but they exploit the data differently. Gardner
+and Flexible TWFE rely on the parallel trends assumption holding
+globally---they use the pre-treatment variation of all untreated units to
+estimate counterfactual trends for all treated cohorts. CS estimates
+cohort-specific counterfactuals using only the cohort's own not-yet-treated
+comparisons. When treatment effect heterogeneity is strong and cohort
+compositions differ, the two approaches can diverge.
+
+\paragraph{GMM weighting and efficiency.}
+The three GMM estimators operate on an identical set of moment
+conditions---5{,}829 not-yet-treated $2\times 2$ DiD comparisons spanning
+236 cohort-time CATT cells---and differ only in the weighting matrix
+applied to those moments.
+
+GMM-OLS assigns equal weight to all 5{,}829 DiD moments, yielding
+$\hat{\theta} \approx +0.027$. GMM-Diag upweights moments with low
+marginal variance and downweights high-variance moments, yielding
+$\hat{\theta} \approx +0.025$---a modest shift toward zero that reflects
+the partial information in the diagonal structure of $\Omega$.
+GMM-Eff applies the full inverse-covariance matrix $\Omega^{-1}$ as the
+weighting matrix. This is the optimal weighting under
+\citet{hansen1982}, and it accounts for the cross-moment correlations that
+arise because the same state-year observation appears in multiple DiD
+comparisons. The GMM-Eff estimate collapses to near zero
+($\approx+0.0002$) in both panels.
+
+This convergence toward zero as efficiency increases has a clear
+interpretation. The 5{,}829 DiD moments are not independent: moments
+sharing a focal cohort, a control cohort, or an overlapping time
+window are positively correlated. Under equal weighting (GMM-OLS),
+redundant moments receive excessive weight and pull the estimate away
+from zero. The optimal weighting matrix $\Omega^{-1}$ effectively
+orthogonalises the moment conditions, assigning near-zero weight to
+moments that are nearly collinear with others and reserving
+weight for the moments that carry orthogonal identifying information.
+The resulting estimate reflects what the data actually identify after
+this de-redundancy operation. The efficiency gain from full
+inverse-covariance weighting over identity weighting is substantial:
+GMM-Eff standard errors ($\approx 0.014$) are approximately 26 percent
+smaller than GMM-OLS standard errors ($\approx 0.019$), consistent
+with the simulation results in Section~\ref{sec:simulations}.
+
+\subsection{Reliability of Estimates and Implications}
+\label{subsec:reliability}
+
+Not all estimates in Table~\ref{tab:beck_results} are equally reliable,
+and it is important to distinguish between estimators on the basis of
+their identifying assumptions and statistical properties.
+
+\textit{TWFE is the least reliable.} The negative and significant TWFE
+estimate is not credible as a causal effect estimate: its sign and
+magnitude are driven overwhelmingly by forbidden comparisons, as the
+Goodman-Bacon decomposition confirms. This is an instructive case study
+in the mechanism by which staggered adoption, when combined with
+heterogeneous effects, causes TWFE to recover a biased and potentially
+sign-reversed estimate of the true ATT.
+
+\textit{SA should be interpreted with caution.} The large negative SA
+estimates appear inconsistent with the other heterogeneous-robust
+estimators. As discussed above, the event-time aggregation weights
+and, in Panel A, the treatment of always-treated states as
+never-treated introduce plausible sources of distortion. Researchers
+relying on SA in applications with always-treated units should verify
+robustness of the reference group coding.
+
+\textit{CS, Gardner, and Flexible TWFE are unbiased but differ in
+efficiency.} All three eliminate forbidden comparisons and are
+consistent under parallel trends. The sign disagreement between
+CS (near zero) and Gardner/Flexible TWFE (positive) reflects
+genuine differences in how each method constructs counterfactual
+trends. The CS estimate, which makes no cross-cohort extrapolation,
+may be the most conservative and credible among this group.
+
+\textit{GMM-Eff is the most reliable.} It is the minimum-variance
+unbiased estimator among the GMM class under the parallel trends
+assumption, exploiting all not-yet-treated comparisons while
+accounting for the full error covariance structure. Its point
+estimate of essentially zero ($+0.0002$ in Panel A, $+0.0007$ in
+Panel B) is statistically indistinguishable from zero at any
+conventional significance level, with the tightest standard errors
+among the unbiased estimators. The GMM-Diag estimator, which uses
+only the diagonal of $\Omega$, delivers an intermediate result:
+it captures some but not all of the efficiency gains from accounting
+for moment dependence, and its positive point estimate ($\approx +0.025$)
+is a consequence of the residual weight assigned to
+redundant, correlated DiD moments.
+
+\medskip
+
+\noindent
+Taken together, the results in Table~\ref{tab:beck_results} deliver a
+clear and consistent message from the unbiased estimators: once
+forbidden comparisons are removed and the identifying information in
+the data is extracted efficiently, there is no statistically
+significant evidence that branch banking deregulation affected income
+inequality. The original finding of \citet{beck2010} is an artifact
+of the TWFE bias rather than a genuine causal effect. This
+application illustrates that the choice of estimator is not merely a
+technical detail in staggered DiD designs---it can determine whether
+a paper's central conclusion is a positive, a negative, or a null
+result.
