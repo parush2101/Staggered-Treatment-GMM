@@ -260,7 +260,12 @@ for (s in seq_len(n_did_g)) {
 
 # Iterative efficient GMM (3 iterations)
 cat("Running Efficient GMM...\n"); flush(stdout())
-beta_gmm <- as.numeric(QtQ_inv_g %*% crossprod(Q_H_g, Delta_g))
+
+# Identity-weighted OLS GMM: beta = (Q'Q)^{-1} Q' Delta
+beta_ols_gmm <- as.numeric(QtQ_inv_g %*% crossprod(Q_H_g, Delta_g))
+att_ols_gmm  <- mean(beta_ols_gmm)
+beta_gmm     <- beta_ols_gmm
+Omega        <- NULL
 
 for (iter in 1:3) {
   beta_old <- beta_gmm
@@ -307,6 +312,18 @@ for (iter in 1:3) {
 att_gmm <- mean(beta_gmm)
 cat(sprintf("Efficient GMM: ATT = %.4f\n\n", att_gmm))
 
+# ---- Standard errors (delta method: Var(ATT) = w' V_beta w, w = 1/n) ----
+w_g <- rep(1 / n_catt_g, n_catt_g)
+
+# OLS GMM sandwich: V_ols = (Q'Q)^{-1} Q' Omega Q (Q'Q)^{-1}
+V_ols_gmm <- QtQ_inv_g %*% crossprod(Q_H_g, Omega %*% Q_H_g) %*% QtQ_inv_g
+se_ols_gmm <- as.numeric(sqrt(t(w_g) %*% V_ols_gmm %*% w_g))
+
+# Efficient GMM: V_eff = (Q' Omega^{-1} Q)^{-1}
+OQ_fin   <- solve(Omega, Q_H_g)
+V_eff    <- solve(crossprod(Q_H_g, OQ_fin))
+se_gmm   <- as.numeric(sqrt(t(w_g) %*% V_eff %*% w_g))
+
 # ===========================================================================
 # 8. Results Table
 # ===========================================================================
@@ -314,11 +331,15 @@ cat(sprintf("Efficient GMM: ATT = %.4f\n\n", att_gmm))
 sig <- function(p) ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.1, "*", "")))
 pval <- function(est, se) 2 * pnorm(-abs(est / se))
 
-p_twfe <- pval(att_twfe,      se_twfe)
-p_flex <- pval(att_flex_cell, se_flex)
-p_gard <- pval(att_gard,      se_gard)
-p_cs   <- pval(att_cs,        se_cs)
-p_sa   <- pval(att_sa,        se_sa)
+p_twfe    <- pval(att_twfe,      se_twfe)
+p_flex    <- pval(att_flex_cell, se_flex)
+p_gard    <- pval(att_gard,      se_gard)
+p_cs      <- pval(att_cs,        se_cs)
+p_sa      <- pval(att_sa,        se_sa)
+p_ols_gmm <- pval(att_ols_gmm,   se_ols_gmm)
+p_gmm     <- pval(att_gmm,       se_gmm)
+
+fmt <- "  %-30s  %8.4f  %8.4f  %7.4f  %s\n"
 
 cat(strrep("=", 76), "\n")
 cat("  Beck (2010): Effect of Branch Banking Deregulation on ln(Gini)\n")
@@ -326,24 +347,23 @@ cat("  N = 49 states x 31 years (1976-2006)\n")
 cat(strrep("=", 76), "\n")
 cat(sprintf("  %-30s  %8s  %8s  %7s\n", "Estimator", "ATT", "SE", "p"))
 cat(strrep("-", 60), "\n")
-cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
-            "TWFE (vanilla)",            att_twfe,      se_twfe, p_twfe, sig(p_twfe)))
-cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
-            "Sun-Abraham (2021)",        att_sa,        se_sa,   p_sa,   sig(p_sa)))
-cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
-            "Callaway-Sant'Anna (2021)", att_cs,        se_cs,   p_cs,   sig(p_cs)))
-cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
-            "Gardner (2021)",            att_gard,      se_gard, p_gard, sig(p_gard)))
-cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
-            sprintf("TWFE Flexible (%d cells)", n_cells),
-            att_flex_cell, se_flex, p_flex, sig(p_flex)))
-cat(sprintf("  %-30s  %8.4f  %8s  %7s\n",
-            sprintf("Efficient GMM (%d cells)", n_catt_g),
-            att_gmm, "—", "—"))
+cat(sprintf(fmt, "TWFE (vanilla)",            att_twfe,      se_twfe,    p_twfe,    sig(p_twfe)))
+cat(sprintf(fmt, "Sun-Abraham (2021)",        att_sa,        se_sa,      p_sa,      sig(p_sa)))
+cat(sprintf(fmt, "Callaway-Sant'Anna (2021)", att_cs,        se_cs,      p_cs,      sig(p_cs)))
+cat(sprintf(fmt, "Gardner (2021)",            att_gard,      se_gard,    p_gard,    sig(p_gard)))
+cat(sprintf(fmt, sprintf("TWFE Flexible (%d cells)", n_cells),
+            att_flex_cell, se_flex,    p_flex,    sig(p_flex)))
+cat(strrep("-", 60), "\n")
+cat(sprintf(fmt, sprintf("GMM-OLS (%d cells)", n_catt_g),
+            att_ols_gmm,   se_ols_gmm, p_ols_gmm, sig(p_ols_gmm)))
+cat(sprintf(fmt, sprintf("GMM-Efficient (%d cells)", n_catt_g),
+            att_gmm,       se_gmm,     p_gmm,     sig(p_gmm)))
 cat(strrep("=", 76), "\n")
-cat("  SE for TWFE Flexible: delta method sqrt(w'Vw), w=1/n, V clustered by state\n")
-cat("  CS: not-yet-treated control, simple aggregation; SA: interaction-weighted\n")
-cat("  GMM: notyet comparisons, all pre-periods, iterated Omega (3 iters)\n\n")
+cat("  SE method — TWFE Flex: delta, V clustered by state\n")
+cat("             GMM-OLS:   delta, sandwich (Q'Q)^{-1} Q'OmegaQ (Q'Q)^{-1}\n")
+cat("             GMM-Eff:   delta, V = (Q'Omega^{-1}Q)^{-1}\n")
+cat("  CS: not-yet-treated control; SA: interaction-weighted\n")
+cat("  GMM: notyet comparisons, all pre-periods, Omega from autocovariances\n\n")
 
 cat("Cell CATT distribution (TWFE Flexible):\n")
 cat(sprintf("  Min=%.4f  p25=%.4f  Median=%.4f  p75=%.4f  Max=%.4f\n\n",
