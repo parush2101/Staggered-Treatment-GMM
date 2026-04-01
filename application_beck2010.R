@@ -13,6 +13,7 @@
 #   3. Gardner (did2s)             — two-stage DiD, scalar ATT
 #   4. Callaway-Sant'Anna (2021)   — att_gt with not-yet-treated control
 #   5. Sun-Abraham (2021)          — interaction-weighted estimator via sunab()
+#   6. Efficient GMM               — iterated optimal weighting (Arora-Bijani 2025)
 #
 # Reference: Beck, T., Levine, R., & Levkov, A. (2010). Big Bad Banks?
 #   The Winners and Losers from Bank Deregulation in the United States.
@@ -23,6 +24,7 @@ library(data.table)
 library(fixest)
 library(did2s)
 library(did)
+library(MASS)
 
 # ===========================================================================
 # 1. Load Data
@@ -141,7 +143,172 @@ att_sa  <- as.numeric(aggregate(m_sa, agg = "ATT")[1])
 se_sa   <- as.numeric(aggregate(m_sa, agg = "ATT")[2])
 
 # ===========================================================================
-# 7. Results Table
+# 7. Efficient GMM (Arora-Bijani 2025)
+# ===========================================================================
+# Adapts the simulation estimator from sim4_all_estimators.R to real data.
+# Identification: not-yet-treated comparisons only (no never-treated exists).
+# Identified CATTs: t_post <= 1998 (last year with a not-yet-treated control).
+# Omega estimated iteratively from autocovariances of two-way-demeaned residuals.
+# ATT = simple cell mean of all identified CATTs (cell-weighted).
+
+T_yr   <- 1976:2006          # sample years
+T_len  <- length(T_yr)       # 31
+yr_idx <- function(y) y - 1975L   # maps year -> 1-based column index
+
+# Focal cohorts and identifiable post-periods
+treated_g  <- sort(unique(dt[branch_reform >= 1977, branch_reform]))
+T_end_id   <- max(treated_g) - 1L   # 1998
+
+# State-level cohort mapping (49 states in order of statefip)
+states_ord  <- dt[, .(statefip = first(statefip),
+                       cohort   = first(branch_reform)), by = state]
+setorder(states_ord, statefip)
+N_st        <- nrow(states_ord)    # 49
+unit_cohort <- states_ord$cohort   # cohort year for each state (index 1:49)
+cohort_n    <- dt[branch_reform %in% treated_g,
+                   .(n = uniqueN(state)), by = branch_reform]
+setkey(cohort_n, branch_reform)
+get_N <- function(g) cohort_n[.(g), n]
+
+# CATT list: (g_c, t_post) with t_post in [g_c, T_end_id]
+catt_list_g <- list()
+for (g_c in treated_g) {
+  if (g_c > T_end_id) next
+  for (tp in g_c:T_end_id)
+    catt_list_g[[length(catt_list_g) + 1]] <- c(g_c, tp)
+}
+n_catt_g   <- length(catt_list_g)   # 236
+catt_g_vec <- sapply(catt_list_g, `[`, 1)
+catt_t_vec <- sapply(catt_list_g, `[`, 2)
+
+# CATT index lookup
+catt_key_g <- setNames(seq_len(n_catt_g),
+  paste(catt_g_vec, catt_t_vec, sep = "-"))
+
+# Build DiD meta (not-yet-treated only, all pre-periods)
+did_meta_g <- vector("list", 8000L); cnt_g <- 0L
+for (ci in seq_len(n_catt_g)) {
+  g_c  <- catt_list_g[[ci]][1]; t_post <- catt_list_g[[ci]][2]
+  notyet <- treated_g[treated_g > t_post]
+  if (!length(notyet)) next
+  for (t_pre in 1976L:(g_c - 1L)) {
+    for (g_l in notyet) {
+      cnt_g <- cnt_g + 1L
+      did_meta_g[[cnt_g]] <- list(catt_idx = ci, type = "notyet",
+                                   focal_g = g_c, ctrl_g = g_l,
+                                   t_post = t_post, t_pre = t_pre)
+    }
+  }
+}
+did_meta_g <- did_meta_g[seq_len(cnt_g)]
+n_did_g    <- cnt_g   # 5829
+
+meta_fg <- sapply(did_meta_g, `[[`, "focal_g")
+meta_cg <- sapply(did_meta_g, `[[`, "ctrl_g")
+meta_tp <- sapply(did_meta_g, `[[`, "t_post")
+meta_tr <- sapply(did_meta_g, `[[`, "t_pre")
+
+# Q_H matrix (n_did x n_catt), one 1 per row (notyet: no bias corrections)
+Q_H_g   <- matrix(0L, nrow = n_did_g, ncol = n_catt_g)
+for (s in seq_len(n_did_g)) Q_H_g[s, did_meta_g[[s]]$catt_idx] <- 1L
+Q_H_g   <- matrix(as.numeric(Q_H_g), nrow = n_did_g)
+QtQ_g   <- crossprod(Q_H_g)
+QtQ_inv_g <- tryCatch(solve(QtQ_g), error = function(e) ginv(QtQ_g))
+
+# C_mat: cohort-pair covariance structure
+N_f_g <- sapply(meta_fg, get_N)
+N_c_g <- sapply(meta_cg, get_N)
+gg_m  <- outer(meta_fg, meta_fg, "==")
+gc_m  <- outer(meta_fg, meta_cg, "==")
+cg_m  <- outer(meta_cg, meta_fg, "==")
+cc_m  <- outer(meta_cg, meta_cg, "==")
+C_mat_g <- sweep(gg_m - gc_m, 1L, 1 / N_f_g, "*") +
+           sweep(cc_m - cg_m, 1L, 1 / N_c_g, "*")
+rm(gg_m, gc_m, cg_m, cc_m); invisible(gc())
+
+# Lag-index vectors for autocovariance lookup
+pp_v_g <- as.vector(abs(outer(meta_tp, meta_tp, "-")))
+pr_v_g <- as.vector(abs(outer(meta_tp, meta_tr, "-")))
+rp_v_g <- as.vector(abs(outer(meta_tr, meta_tp, "-")))
+rr_v_g <- as.vector(abs(outer(meta_tr, meta_tr, "-")))
+
+# Build Y matrix (N_st x T_len) from ln_gini
+Y_mat_g <- matrix(NA_real_, nrow = N_st, ncol = T_len)
+for (i in seq_len(N_st)) {
+  st <- states_ord$state[i]
+  rows_i <- dt[state == st][order(wrkyr)]
+  Y_mat_g[i, ] <- rows_i$ln_gini
+}
+
+# Cohort means Ybar (n_cohorts x T_len)
+all_cohorts_g <- treated_g
+Ybar_g <- matrix(NA_real_, nrow = length(all_cohorts_g), ncol = T_len)
+for (ci in seq_along(all_cohorts_g)) {
+  units <- which(unit_cohort == all_cohorts_g[ci])
+  Ybar_g[ci, ] <- colMeans(Y_mat_g[units, , drop = FALSE])
+}
+coh_idx_g <- function(g_val) which(all_cohorts_g == g_val)
+
+# Delta vector
+Delta_g <- numeric(n_did_g)
+for (s in seq_len(n_did_g)) {
+  e  <- did_meta_g[[s]]
+  gi <- coh_idx_g(e$focal_g); ci <- coh_idx_g(e$ctrl_g)
+  Delta_g[s] <- (Ybar_g[gi, yr_idx(e$t_post)] - Ybar_g[gi, yr_idx(e$t_pre)]) -
+                (Ybar_g[ci, yr_idx(e$t_post)] - Ybar_g[ci, yr_idx(e$t_pre)])
+}
+
+# Iterative efficient GMM (3 iterations)
+cat("Running Efficient GMM...\n"); flush(stdout())
+beta_gmm <- as.numeric(QtQ_inv_g %*% crossprod(Q_H_g, Delta_g))
+
+for (iter in 1:3) {
+  beta_old <- beta_gmm
+
+  # Subtract estimated treatment effects from Y
+  Y_adj <- Y_mat_g
+  for (k in seq_len(n_catt_g)) {
+    units_k <- which(unit_cohort == catt_g_vec[k])
+    t_col   <- yr_idx(catt_t_vec[k])
+    Y_adj[units_k, t_col] <- Y_adj[units_k, t_col] - beta_gmm[k]
+  }
+
+  # Two-way demean (remove unit + time FE)
+  row_m <- rowMeans(Y_adj); col_m <- colMeans(Y_adj); grand_m <- mean(Y_adj)
+  resid_mat <- Y_adj - outer(row_m, rep(1, T_len)) -
+               outer(rep(1, N_st), col_m) + grand_m
+
+  # Autocovariances sigma(d) for d = 0, ..., T-1
+  sigma_d <- numeric(T_len)
+  for (d in 0:(T_len - 1)) {
+    r1 <- seq_len(T_len - d); r2 <- r1 + d
+    sigma_d[d + 1] <- sum(resid_mat[, r1] * resid_mat[, r2]) / (N_st * (T_len - d))
+  }
+
+  # Omega = C_mat * S_vec (element-wise)
+  S_vec <- sigma_d[pp_v_g + 1] - sigma_d[pr_v_g + 1] -
+           sigma_d[rp_v_g + 1] + sigma_d[rr_v_g + 1]
+  Omega <- C_mat_g * matrix(S_vec, nrow = n_did_g)
+  Omega <- (Omega + t(Omega)) / 2
+  diag(Omega) <- diag(Omega) + 1e-6
+
+  OQ <- tryCatch(solve(Omega, Q_H_g), error = function(e) NULL)
+  if (is.null(OQ)) { cat("  Omega solve failed at iter", iter, "\n"); break }
+  OD       <- solve(Omega, Delta_g)
+  beta_gmm <- as.numeric(tryCatch(
+    solve(crossprod(Q_H_g, OQ), crossprod(Q_H_g, OD)),
+    error = function(e) beta_old))
+
+  conv <- max(abs(beta_gmm - beta_old))
+  cat(sprintf("  Iter %d: max|delta_beta| = %.2e\n", iter, conv))
+  if (conv < 1e-6) break
+}
+
+att_gmm <- mean(beta_gmm)
+cat(sprintf("Efficient GMM: ATT = %.4f\n\n", att_gmm))
+
+# ===========================================================================
+# 8. Results Table
 # ===========================================================================
 
 sig <- function(p) ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.1, "*", "")))
@@ -170,9 +337,13 @@ cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
 cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
             sprintf("TWFE Flexible (%d cells)", n_cells),
             att_flex_cell, se_flex, p_flex, sig(p_flex)))
+cat(sprintf("  %-30s  %8.4f  %8s  %7s\n",
+            sprintf("Efficient GMM (%d cells)", n_catt_g),
+            att_gmm, "—", "—"))
 cat(strrep("=", 76), "\n")
 cat("  SE for TWFE Flexible: delta method sqrt(w'Vw), w=1/n, V clustered by state\n")
-cat("  CS: not-yet-treated control, simple aggregation; SA: interaction-weighted\n\n")
+cat("  CS: not-yet-treated control, simple aggregation; SA: interaction-weighted\n")
+cat("  GMM: notyet comparisons, all pre-periods, iterated Omega (3 iters)\n\n")
 
 cat("Cell CATT distribution (TWFE Flexible):\n")
 cat(sprintf("  Min=%.4f  p25=%.4f  Median=%.4f  p75=%.4f  Max=%.4f\n\n",
