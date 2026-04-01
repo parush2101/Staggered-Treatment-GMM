@@ -8,9 +8,11 @@
 #         Cohort:    branch_reform (year of deregulation)
 #
 # Estimators:
-#   1. TWFE (vanilla)       — single scalar on D_branch
-#   2. TWFE Flexible        — cohort x year cell dummies (interacted TWFE)
-#   3. Gardner (did2s)      — two-stage DiD, scalar ATT
+#   1. TWFE (vanilla)              — single scalar on D_branch
+#   2. TWFE Flexible               — cohort x year cell dummies (interacted TWFE)
+#   3. Gardner (did2s)             — two-stage DiD, scalar ATT
+#   4. Callaway-Sant'Anna (2021)   — att_gt with not-yet-treated control
+#   5. Sun-Abraham (2021)          — interaction-weighted estimator via sunab()
 #
 # Reference: Beck, T., Levine, R., & Levkov, A. (2010). Big Bad Banks?
 #   The Winners and Losers from Bank Deregulation in the United States.
@@ -20,6 +22,7 @@
 library(data.table)
 library(fixest)
 library(did2s)
+library(did)
 
 # ===========================================================================
 # 1. Load Data
@@ -99,45 +102,80 @@ att_gard <- as.numeric(coef(m_gard)["D_branch"])
 se_gard  <- as.numeric(se(m_gard)["D_branch"])
 
 # ===========================================================================
-# 5. Results Table
+# 5. Callaway-Sant'Anna (2021)
+# ===========================================================================
+# att_gt estimates CATT(g,t) for each cohort-period pair using not-yet-treated
+# units as the comparison group. Pre-sample-treated states (branch_reform < 1977)
+# are recoded as 0 (never-treated) so CS treats them as always-controls.
+# ATT aggregated via simple average over all (g,t) post-treatment cells.
+
+dt_cs <- copy(dt)
+dt_cs[branch_reform < 1977, branch_reform := 0L]
+
+cs_out <- att_gt(yname         = "ln_gini",
+                 tname         = "wrkyr",
+                 idname        = "statefip",
+                 gname         = "branch_reform",
+                 control_group = "notyettreated",
+                 data          = as.data.frame(dt_cs),
+                 est_method    = "reg",
+                 print_details = FALSE)
+
+cs_agg   <- aggte(cs_out, type = "simple")
+att_cs   <- cs_agg$overall.att
+se_cs    <- cs_agg$overall.se
+
+# ===========================================================================
+# 6. Sun-Abraham (2021)
+# ===========================================================================
+# Interaction-weighted estimator via fixest::sunab(). Pre-sample-treated
+# states recoded to 0 (used as never-treated base group).
+# ATT aggregated as the standard interaction-weighted average across cohorts.
+
+dt[, g_sa := fifelse(branch_reform >= 1977 & branch_reform <= 2006,
+                      branch_reform, 0L)]
+
+m_sa    <- feols(ln_gini ~ sunab(g_sa, wrkyr) | state + wrkyr,
+                 data = dt, cluster = ~state)
+att_sa  <- as.numeric(aggregate(m_sa, agg = "ATT")[1])
+se_sa   <- as.numeric(aggregate(m_sa, agg = "ATT")[2])
+
+# ===========================================================================
+# 7. Results Table
 # ===========================================================================
 
 sig <- function(p) ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.1, "*", "")))
 pval <- function(est, se) 2 * pnorm(-abs(est / se))
 
-p_twfe <- pval(att_twfe, se_twfe)
+p_twfe <- pval(att_twfe,      se_twfe)
 p_flex <- pval(att_flex_cell, se_flex)
-p_gard <- pval(att_gard, se_gard)
+p_gard <- pval(att_gard,      se_gard)
+p_cs   <- pval(att_cs,        se_cs)
+p_sa   <- pval(att_sa,        se_sa)
 
-cat(strrep("=", 72), "\n")
+cat(strrep("=", 76), "\n")
 cat("  Beck (2010): Effect of Branch Banking Deregulation on ln(Gini)\n")
 cat("  N = 49 states x 31 years (1976-2006)\n")
-cat(strrep("=", 72), "\n")
-cat(sprintf("  %-28s  %9s  %9s  %6s  %s\n",
-            "Estimator", "ATT", "SE", "p", "Aggregation"))
-cat(strrep("-", 72), "\n")
-cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
-            "TWFE (vanilla)", att_twfe, se_twfe, p_twfe,
-            paste0("FWL weights ", sig(p_twfe))))
-cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
+cat(strrep("=", 76), "\n")
+cat(sprintf("  %-30s  %8s  %8s  %7s\n", "Estimator", "ATT", "SE", "p"))
+cat(strrep("-", 60), "\n")
+cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
+            "TWFE (vanilla)",            att_twfe,      se_twfe, p_twfe, sig(p_twfe)))
+cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
+            "Sun-Abraham (2021)",        att_sa,        se_sa,   p_sa,   sig(p_sa)))
+cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
+            "Callaway-Sant'Anna (2021)", att_cs,        se_cs,   p_cs,   sig(p_cs)))
+cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
+            "Gardner (2021)",            att_gard,      se_gard, p_gard, sig(p_gard)))
+cat(sprintf("  %-30s  %8.4f  %8.4f  %7.4f  %s\n",
             sprintf("TWFE Flexible (%d cells)", n_cells),
-            att_flex_cell, se_flex, p_flex,
-            paste0("cell mean (delta SE) ", sig(p_flex))))
-cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
-            "Gardner (2021)", att_gard, se_gard, p_gard,
-            paste0("FWL weights ", sig(p_gard))))
-cat(strrep("=", 72), "\n")
-cat("  SE for TWFE Flexible: delta method w'Vw, w=1/n, V clustered by state\n\n")
+            att_flex_cell, se_flex, p_flex, sig(p_flex)))
+cat(strrep("=", 76), "\n")
+cat("  SE for TWFE Flexible: delta method sqrt(w'Vw), w=1/n, V clustered by state\n")
+cat("  CS: not-yet-treated control, simple aggregation; SA: interaction-weighted\n\n")
 
 cat("Cell CATT distribution (TWFE Flexible):\n")
 cat(sprintf("  Min=%.4f  p25=%.4f  Median=%.4f  p75=%.4f  Max=%.4f\n\n",
             min(cell_catts), quantile(cell_catts, 0.25),
             median(cell_catts), quantile(cell_catts, 0.75),
             max(cell_catts)))
-
-cat("Notes:\n")
-cat("  - TWFE and Gardner use the same FWL aggregation weights but differ\n")
-cat("    in how fixed effects are estimated: TWFE uses all obs (incl. treated),\n")
-cat("    Gardner stage 1 uses only untreated obs. Sign flips: -0.0213 -> +0.0195.\n")
-cat("  - TWFE Flexible cell mean avoids negative weights; most CATTs are positive.\n")
-cat("  - 8 cohort-1999 post-treatment cells dropped by fixest (collinear with year FE).\n")
