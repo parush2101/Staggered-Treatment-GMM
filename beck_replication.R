@@ -24,9 +24,10 @@ flex_att <- function(etwfe_mod, df_cs) {
 # Uses not-yet-treated comparisons only; all pre-periods as base periods.
 # Omega estimated from autocovariances of two-way-demeaned treatment-adjusted residuals.
 # ATT = simple cell-mean (equal weight per identified CATT).
-# Returns: att_ols, se_ols  (identity weighting, sandwich SE)
-#          att_eff, se_eff  (optimal Omega^{-1} weighting)
-run_gmm <- function(df, n_iter = 4) {
+# Returns: att_ols,  se_ols   (identity weighting, sandwich SE)
+#          att_diag, se_diag  (diagonal Omega^{-1} weighting, sandwich SE)
+#          att_eff,  se_eff   (full Omega^{-1} weighting, delta-method SE)
+run_gmm <- function(df, n_iter_eff = 4, n_iter_diag = 10) {
   T_yr  <- 1976:2006
   T_len <- length(T_yr)
   yi    <- function(y) y - 1975L
@@ -114,11 +115,11 @@ run_gmm <- function(df, n_iter = 4) {
   # OLS GMM (identity weighting): beta_ols = (Q'Q)^{-1} Q' Delta
   beta_ols <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
 
-  # Iterated efficient GMM
+  # ── Iterated efficient GMM ────────────────────────────────────────────────
   beta_eff <- beta_ols
   Omega    <- diag(n_did)
 
-  for (iter in seq_len(n_iter)) {
+  for (iter in seq_len(n_iter_eff)) {
     beta_old <- beta_eff
     Y_adj <- Y_mat
     for (k in seq_len(n_catt)) {
@@ -145,27 +146,75 @@ run_gmm <- function(df, n_iter = 4) {
       error = function(e) beta_old
     )
     conv <- max(abs(beta_eff - beta_old))
-    cat(sprintf("    iter %d: max|Δβ| = %.2e\n", iter, conv))
+    cat(sprintf("    eff iter %d: max|Δβ| = %.2e\n", iter, conv))
     if (conv < 1e-8) break
   }
+  Omega_eff <- Omega   # save for OLS SE and eff SE
 
-  # ATT and SE for both estimators
+  # ── Iterated diagonal GMM (A = diag(Omega)^{-1}) ─────────────────────────
+  # Independent beta trajectory; Omega re-estimated each iteration.
+  beta_diag <- beta_ols
+  Omega_d   <- diag(n_did)
+
+  for (iter in seq_len(n_iter_diag)) {
+    beta_old_d <- beta_diag
+    Y_adj_d <- Y_mat
+    for (k in seq_len(n_catt)) {
+      us <- which(unit_coh == catt_g[k])
+      Y_adj_d[us, yi(catt_t[k])] <- Y_adj_d[us, yi(catt_t[k])] - beta_diag[k]
+    }
+    rm_d <- rowMeans(Y_adj_d); cm_d <- colMeans(Y_adj_d); gm_d <- mean(Y_adj_d)
+    res_d <- Y_adj_d - outer(rm_d, rep(1,T_len)) - outer(rep(1,N_st), cm_d) + gm_d
+    sig_d <- numeric(T_len)
+    for (d in 0:(T_len-1)) {
+      r1 <- seq_len(T_len - d)
+      sig_d[d+1] <- sum(res_d[, r1] * res_d[, r1+d]) / (N_st * (T_len-d))
+    }
+    S_d     <- sig_d[pp+1] - sig_d[pr+1] - sig_d[rp+1] + sig_d[rr+1]
+    Omega_d <- C_mat * matrix(S_d, nrow=n_did)
+    Omega_d <- (Omega_d + t(Omega_d)) / 2
+    diag(Omega_d) <- diag(Omega_d) + 1e-6
+
+    # Update step: beta = (Q'AQ)^{-1} Q'A Delta, A = diag(1/diag(Omega_d))
+    d_inv <- 1 / diag(Omega_d)
+    QAQ   <- crossprod(sweep(Q_H, 1, d_inv, "*"), Q_H)  # Q' diag(d_inv) Q
+    QAD   <- crossprod(Q_H, d_inv * Delta)               # Q' diag(d_inv) Delta
+    beta_diag <- tryCatch(
+      as.numeric(solve(QAQ, QAD)),
+      error = function(e) beta_old_d
+    )
+    conv_d <- max(abs(beta_diag - beta_old_d))
+    cat(sprintf("    diag iter %d: max|Δβ| = %.2e\n", iter, conv_d))
+    if (conv_d < 1e-8) break
+  }
+
+  # ── ATT and SE ──────────────────────────────────────────────────────────────
   w <- rep(1/n_catt, n_catt)
 
-  # OLS GMM: sandwich SE using estimated Omega
-  V_ols <- QtQ_inv %*% crossprod(Q_H, Omega %*% Q_H) %*% QtQ_inv
+  # OLS GMM: sandwich SE  V = (Q'Q)^{-1} Q' Omega Q (Q'Q)^{-1}
+  V_ols  <- QtQ_inv %*% crossprod(Q_H, Omega_eff %*% Q_H) %*% QtQ_inv
   se_ols <- sqrt(as.numeric(t(w) %*% V_ols %*% w))
 
+  # Diagonal GMM: sandwich SE  V = (Q'AQ)^{-1} Q'A Omega_d AQ (Q'AQ)^{-1}
+  d_inv_f <- 1 / diag(Omega_d)
+  Q_a     <- sweep(Q_H, 1, d_inv_f, "*")          # diag(d_inv) Q_H
+  QAQ_f   <- crossprod(Q_a, Q_H)                   # Q' diag(d_inv) Q
+  QAOmAQ  <- crossprod(Q_a, Omega_d %*% Q_a)       # Q'A Omega_d A Q
+  QAQ_inv <- tryCatch(solve(QAQ_f), error=function(e) ginv(QAQ_f))
+  V_diag  <- QAQ_inv %*% QAOmAQ %*% QAQ_inv
+  se_diag <- sqrt(as.numeric(t(w) %*% V_diag %*% w))
+
   # Efficient GMM: V_eff = (Q' Omega^{-1} Q)^{-1}
-  OQ_f  <- tryCatch(solve(Omega, Q_H), error=function(e) NULL)
+  OQ_f  <- tryCatch(solve(Omega_eff, Q_H), error=function(e) NULL)
   V_eff <- if (!is.null(OQ_f))
     tryCatch(solve(crossprod(Q_H, OQ_f)), error=function(e) ginv(crossprod(Q_H, OQ_f)))
     else ginv(crossprod(Q_H))
   se_eff <- sqrt(as.numeric(t(w) %*% V_eff %*% w))
 
-  list(att_ols = sum(w * beta_ols), se_ols = se_ols,
-       att_eff = sum(w * beta_eff), se_eff = se_eff,
-       n_catt  = n_catt, n_did = n_did)
+  list(att_ols  = sum(w * beta_ols),  se_ols  = se_ols,
+       att_diag = sum(w * beta_diag), se_diag = se_diag,
+       att_eff  = sum(w * beta_eff),  se_eff  = se_eff,
+       n_catt   = n_catt, n_did = n_did)
 }
 
 # ── data ───────────────────────────────────────────────────────────────────────
@@ -191,7 +240,7 @@ etwfe_A <- etwfe(fml=ln_gini~1, tvar=wrkyr, gvar=branch_reform,
                  data=dfA_37, vcov=~statefip)
 fa      <- flex_att(etwfe_A, dfA_37)
 cat("Panel A GMM:\n")
-gmm_A   <- run_gmm(dfA_37, n_iter=4)
+gmm_A   <- run_gmm(dfA_37, n_iter_eff=4, n_iter_diag=10)
 
 # ── Panel B estimators ─────────────────────────────────────────────────────────
 twfe_B  <- feols(ln_gini ~ D_branch | statefip + wrkyr, data=dfB, cluster=~statefip)
@@ -208,7 +257,7 @@ etwfe_B <- etwfe(fml=ln_gini~1, tvar=wrkyr, gvar=branch_reform,
                  data=dfB, vcov=~statefip)
 fb      <- flex_att(etwfe_B, dfB)
 cat("Panel B GMM:\n")
-gmm_B   <- run_gmm(dfB, n_iter=4)
+gmm_B   <- run_gmm(dfB, n_iter_eff=4, n_iter_diag=10)
 
 # ── Combined results table ─────────────────────────────────────────────────────
 hdr <- "%-22s  %7s %7s    %7s %7s"
@@ -239,10 +288,13 @@ cat(sprintf(row, "Flexible TWFE",
 cat(div, "\n")
 cat(sprintf(row, sprintf("GMM-OLS (%d CATTs)", gmm_A$n_catt),
             gmm_A$att_ols, gmm_A$se_ols, gmm_B$att_ols, gmm_B$se_ols), "\n")
+cat(sprintf(row, sprintf("GMM-Diag (%d CATTs)", gmm_A$n_catt),
+            gmm_A$att_diag, gmm_A$se_diag, gmm_B$att_diag, gmm_B$se_diag), "\n")
 cat(sprintf(row, sprintf("GMM-Eff (%d CATTs)", gmm_A$n_catt),
             gmm_A$att_eff, gmm_A$se_eff, gmm_B$att_eff, gmm_B$se_eff), "\n")
 cat(strrep("=", 58), "\n")
 cat("SE: TWFE/SA/CS/Gardner clustered by state\n")
-cat("    GMM-OLS: sandwich (Q'Q)^{-1} Q'ΩQ (Q'Q)^{-1}\n")
-cat("    GMM-Eff: delta method (Q'Ω^{-1}Q)^{-1}\n")
+cat("    GMM-OLS:  sandwich (Q'Q)^{-1} Q'ΩQ (Q'Q)^{-1}\n")
+cat("    GMM-Diag: sandwich (Q'AQ)^{-1} Q'AΩ AQ (Q'AQ)^{-1}, A=diag(Ω)^{-1}\n")
+cat("    GMM-Eff:  delta method (Q'Ω^{-1}Q)^{-1}\n")
 cat("    Ω from autocovariances of treatment-adjusted residuals\n")
