@@ -70,9 +70,16 @@ fc_g    <- as.integer(sub("_.*", "", cell_str))
 fc_t    <- as.integer(sub(".*_", "", cell_str))
 post    <- fc_t >= fc_g
 
-cell_catts    <- fc[keep][post]
+post_names    <- fn[keep][post]
+cell_catts    <- fc[post_names]
 n_cells       <- sum(post)
 att_flex_cell <- mean(cell_catts)
+
+# SE via delta method: ATT = w'beta, w = 1/n => Var(ATT) = w' V w
+# V is the full clustered VCV of post-treatment cell CATTs
+V_post   <- vcov(m_flex)[post_names, post_names]
+w        <- rep(1 / n_cells, n_cells)
+se_flex  <- as.numeric(sqrt(t(w) %*% V_post %*% w))
 
 # ===========================================================================
 # 4. Gardner (2021) Two-Stage DiD
@@ -95,10 +102,12 @@ se_gard  <- as.numeric(se(m_gard)["D_branch"])
 # 5. Results Table
 # ===========================================================================
 
-p_twfe <- 2 * pnorm(-abs(att_twfe / se_twfe))
-p_gard <- 2 * pnorm(-abs(att_gard / se_gard))
-
 sig <- function(p) ifelse(p < 0.01, "***", ifelse(p < 0.05, "**", ifelse(p < 0.1, "*", "")))
+pval <- function(est, se) 2 * pnorm(-abs(est / se))
+
+p_twfe <- pval(att_twfe, se_twfe)
+p_flex <- pval(att_flex_cell, se_flex)
+p_gard <- pval(att_gard, se_gard)
 
 cat(strrep("=", 72), "\n")
 cat("  Beck (2010): Effect of Branch Banking Deregulation on ln(Gini)\n")
@@ -110,14 +119,15 @@ cat(strrep("-", 72), "\n")
 cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
             "TWFE (vanilla)", att_twfe, se_twfe, p_twfe,
             paste0("FWL weights ", sig(p_twfe))))
-cat(sprintf("  %-28s  %9.4f  %9s  %6s  %s\n",
+cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
             sprintf("TWFE Flexible (%d cells)", n_cells),
-            att_flex_cell, "—", "—",
-            "simple cell mean"))
+            att_flex_cell, se_flex, p_flex,
+            paste0("cell mean (delta SE) ", sig(p_flex))))
 cat(sprintf("  %-28s  %9.4f  %9.4f  %6.4f  %s\n",
             "Gardner (2021)", att_gard, se_gard, p_gard,
             paste0("FWL weights ", sig(p_gard))))
-cat(strrep("=", 72), "\n\n")
+cat(strrep("=", 72), "\n")
+cat("  SE for TWFE Flexible: delta method w'Vw, w=1/n, V clustered by state\n\n")
 
 cat("Cell CATT distribution (TWFE Flexible):\n")
 cat(sprintf("  Min=%.4f  p25=%.4f  Median=%.4f  p75=%.4f  Max=%.4f\n\n",
