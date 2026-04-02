@@ -74,13 +74,13 @@ Callaway \& Sant'Anna (2021)
   & $-0.0101$       & $(0.0078)$
   & $\phantom{-}0.0062$  & $(0.0053)$ \\
 Sun \& Abraham (2021)
-  & $-0.0355^{***}$ & $(0.0114)$
+  & $-0.0354^{***}$ & $(0.0114)$
   & $-0.0536^{***}$ & $(0.0063)$ \\
 Gardner et al.\ (2024)
   & $\phantom{-}0.0195^{***}$ & $(0.0067)$
   & $\phantom{-}0.0195^{***}$ & $(0.0067)$ \\
 Flexible TWFE (Wooldridge 2025)
-  & $\phantom{-}0.0209^{***}$ & $(0.0069)$
+  & $-0.0165$       & $(0.0141)$
   & $\phantom{-}0.0195^{***}$ & $(0.0069)$ \\[4pt]
 \multicolumn{5}{l}{\textit{Proposed GMM estimators (236 CATTs, 5{,}829 DiD moments)}} \\[2pt]
 GMM-OLS (identity weights)
@@ -107,8 +107,8 @@ GMM-Eff (full $\Omega^{-1}$)
   treatment-adjusted, two-way-demeaned residuals.
   CS uses not-yet-treated states as the control group with doubly robust
   estimation and group-level aggregation.
-  SA uses interaction-weighted aggregation; always-treated states coded
-  as never-treated ($g = \infty$) in Panel A.
+  SA uses interaction-weighted aggregation with actual treatment cohorts
+  for all states in both panels.
   Panel A GMM uses 37 eligible states (branch reform $\geq 1976$);
   Panel B GMM uses all 36 states.
 \end{tablenotes}
@@ -146,10 +146,18 @@ The CS, Gardner, and Flexible TWFE estimators all eliminate forbidden
 comparisons by construction, yet they yield markedly different results.
 CS finds a negative but insignificant ATT in Panel A ($-0.0101$) and a
 small positive one in Panel B ($+0.0062$), consistent with a near-zero
-true effect. Gardner and Flexible TWFE, which use an imputation approach
-to estimate counterfactual outcomes from pre-treatment variation, yield
-positive and statistically significant estimates around $+0.020$ in both
-panels.
+true effect. Gardner yields positive and significant estimates around
+$+0.020$ in both panels. The Flexible TWFE estimator diverges sharply
+across panels: it yields $-0.0165$ (insignificant) in Panel A but
+$+0.0195$ (significant) in Panel B. This divergence arises because
+the Flexible TWFE, unlike Gardner's two-stage approach, includes
+always-treated states in the common time fixed-effects estimation.
+Since these 12 states contribute only post-treatment observations,
+they shift the estimated time trends and thereby alter the
+counterfactual baseline for all other cohorts. Gardner avoids this
+contamination by estimating unit and time fixed effects exclusively
+from untreated observations in the first stage, so its estimate is
+invariant to whether always-treated states are retained.
 
 The SA estimator stands apart, yielding large, negative, and highly
 significant estimates ($-0.0355$ in Panel A, $-0.0536$ in Panel B). This
@@ -163,15 +171,22 @@ as an implicit never-treated reference group further distorts the baseline
 comparison. The SA estimate should therefore be interpreted with caution
 in this application.
 
-The divergence between Gardner/Flexible TWFE (positive, $\approx+0.020$)
-and CS (near zero) reflects a subtler difference. Both eliminate
-forbidden comparisons, but they exploit the data differently. Gardner
-and Flexible TWFE rely on the parallel trends assumption holding
-globally---they use the pre-treatment variation of all untreated units to
-estimate counterfactual trends for all treated cohorts. CS estimates
-cohort-specific counterfactuals using only the cohort's own not-yet-treated
-comparisons. When treatment effect heterogeneity is strong and cohort
-compositions differ, the two approaches can diverge.
+The divergence between Gardner (positive, $\approx+0.020$) and CS
+(near zero) reflects a subtler difference. Both eliminate forbidden
+comparisons, but they exploit the data differently. Gardner relies on
+the parallel trends assumption holding globally---it uses the
+pre-treatment variation of all untreated units to estimate
+counterfactual trends for all treated cohorts. CS estimates
+cohort-specific counterfactuals using only the cohort's own
+not-yet-treated comparisons. When treatment effect heterogeneity is
+strong and cohort compositions differ, the two approaches can diverge.
+Panel~B is the cleaner comparison here: in the absence of always-treated
+contamination, Flexible TWFE agrees with Gardner ($+0.0195$), suggesting
+that the imputation approach consistently delivers a positive estimate
+once the data support it. The Panel~A discrepancy for Flexible TWFE
+($-0.0165$) should be attributed to the distorted time fixed effects
+caused by always-treated units rather than to a genuine treatment
+effect estimate.
 
 \paragraph{GMM weighting and efficiency.}
 The three GMM estimators operate on an identical set of moment
@@ -230,13 +245,19 @@ never-treated introduce plausible sources of distortion. Researchers
 relying on SA in applications with always-treated units should verify
 robustness of the reference group coding.
 
-\textit{CS, Gardner, and Flexible TWFE are unbiased but differ in
-efficiency.} All three eliminate forbidden comparisons and are
-consistent under parallel trends. The sign disagreement between
-CS (near zero) and Gardner/Flexible TWFE (positive) reflects
-genuine differences in how each method constructs counterfactual
-trends. The CS estimate, which makes no cross-cohort extrapolation,
-may be the most conservative and credible among this group.
+\textit{CS and Gardner are unbiased; Flexible TWFE is sensitive to
+always-treated units.} CS and Gardner eliminate forbidden comparisons
+and are consistent under parallel trends. The sign disagreement between
+CS (near zero) and Gardner (positive) reflects genuine differences in
+counterfactual trend construction: Gardner uses a global parallel
+trends assumption while CS makes no cross-cohort extrapolation.
+The CS estimate may therefore be the most conservative and credible
+of the two. The Flexible TWFE estimate in Panel~A ($-0.0165$) should
+be treated with caution: its Panel~A value is distorted by
+always-treated states contaminating the time fixed effects, while its
+Panel~B value ($+0.0195$) agrees with Gardner. In applications with
+always-treated units, Flexible TWFE should either exclude those units
+or be compared against a Panel~B counterpart for robustness.
 
 \textit{GMM-Eff is the most reliable.} It is the minimum-variance
 unbiased estimator among the GMM class under the parallel trends

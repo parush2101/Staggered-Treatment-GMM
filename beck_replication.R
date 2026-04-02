@@ -219,7 +219,7 @@ run_gmm <- function(df, n_iter_eff = 4, n_iter_diag = 10) {
 
 # ── data ───────────────────────────────────────────────────────────────────────
 dfA           <- read.csv('/Users/parusharora/Downloads/panel_A_beck_replication.csv')
-dfA$cohort_sa <- ifelse(dfA$branch_reform < 1976, Inf, as.numeric(dfA$branch_reform))
+dfA$cohort_sa <- as.numeric(dfA$branch_reform)
 dfA_37        <- dfA[dfA$branch_reform >= 1976, ]
 
 dfB           <- read.csv('/Users/parusharora/panel_B_modern_did_eligible.csv')
@@ -227,7 +227,7 @@ dfB$cohort_sa <- dfB$branch_reform
 
 # ── Panel A estimators ─────────────────────────────────────────────────────────
 twfe_A  <- feols(ln_gini ~ D_branch | statefip + wrkyr, data=dfA, cluster=~statefip)
-cs_A    <- att_gt("ln_gini","wrkyr","statefip","branch_reform", data=dfA_37,
+cs_A    <- att_gt("ln_gini","wrkyr","statefip","branch_reform", data=dfA,
                   control_group="notyettreated", est_method="dr",
                   bstrap=FALSE, print_details=FALSE)
 cs_aggA <- aggte(cs_A, type="group", na.rm=TRUE)
@@ -237,8 +237,8 @@ sa_aggA <- aggregate(sa_A, agg="ATT")
 gard_A  <- did2s(dfA, yname="ln_gini", first_stage=~0|statefip+wrkyr,
                  second_stage=~i(D_branch), treatment="D_branch", cluster_var="statefip")
 etwfe_A <- etwfe(fml=ln_gini~1, tvar=wrkyr, gvar=branch_reform,
-                 data=dfA_37, vcov=~statefip)
-fa      <- flex_att(etwfe_A, dfA_37)
+                 data=dfA, vcov=~statefip)
+fa      <- flex_att(etwfe_A, dfA)
 cat("Panel A GMM:\n")
 gmm_A   <- run_gmm(dfA_37, n_iter_eff=4, n_iter_diag=10)
 
