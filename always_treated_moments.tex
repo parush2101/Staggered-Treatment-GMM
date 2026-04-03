@@ -1,0 +1,93 @@
+% ============================================================
+% Section: Augmenting the Moment System with Always-Treated
+%          Cohorts as Bias-Corrected Controls
+%
+% Required packages: amsmath, amssymb
+% ============================================================
+
+\subsection{Augmenting the Moment System with Always-Treated Controls}
+\label{subsec:always_treated_moments}
+
+Let $\mathcal{G}_1$ denote the set of cohorts with at least one
+pre-treatment observation in the sample (within-sample cohorts) and
+$\mathcal{G}_0$ the set of cohorts treated before the sample begins
+(always-treated cohorts). Partition the CATT vector as
+$\beta = (\beta_1^\top, \beta_2^\top)^\top$, where $\beta_1$ collects
+CATTs for $\mathcal{G}_1$ and $\beta_2$ collects CATTs for
+$\mathcal{G}_0$. The baseline GMM system uses only not-yet-treated
+controls and recovers $\beta_1$ via $Q_{11}\beta_1 \approx \Delta_1$,
+with each row of $Q_{11}$ carrying a single $+1$ entry for the focal
+CATT. Cohorts in $\mathcal{G}_0$ are excluded as focal units because
+they have no within-sample pre-treatment periods.
+
+They can, however, serve as \emph{controls} in bias-corrected
+$2\times2$ DiD moments. For focal cohort $g\in\mathcal{G}_1$,
+always-treated control cohort $c\in\mathcal{G}_0$, pre-period
+$s < g$, and post-period $t\geq g$, the bias-corrected moment
+satisfies, under parallel trends,
+\begin{equation}
+  \Delta_{g,c,s,t}
+  = \mathrm{CATT}(g,t)
+    - \bigl[\mathrm{CATT}(c,t) - \mathrm{CATT}(c,s)\bigr]
+    + \varepsilon_{g,c,s,t}.
+  \label{eq:biascorr_moment}
+\end{equation}
+Stacking these with the baseline moments yields the augmented system
+\begin{equation}
+  \begin{pmatrix} Q_{11} & 0 \\ Q_{21} & Q_{22} \end{pmatrix}
+  \begin{pmatrix} \beta_1 \\ \beta_2 \end{pmatrix}
+  \approx
+  \begin{pmatrix} \Delta_1 \\ \Delta_2 \end{pmatrix},
+  \label{eq:augmented_system}
+\end{equation}
+where $Q_{21}$ carries $+1$ entries on $\mathrm{CATT}(g,t)$ and each
+row of $Q_{22}$ encodes the first difference
+$-\mathrm{CATT}(c,t)+\mathrm{CATT}(c,s)$.
+
+\paragraph{Informational content for within-sample CATTs.}
+The additional moments carry genuine identifying information for
+$\beta_1$ through $Q_{21}$. To see this, consider two
+bias-corrected moments sharing the same control $c$ and focal cohort
+$g$ but differing in the post-period:
+\begin{align}
+  \Delta_{g,c,s,t_1} - \Delta_{g,c,s,t_2}
+  &= \bigl[\mathrm{CATT}(g,t_1) - \mathrm{CATT}(g,t_2)\bigr]
+     - \bigl[\mathrm{CATT}(c,t_1) - \mathrm{CATT}(c,t_2)\bigr].
+  \label{eq:diff_moments}
+\end{align}
+The right-hand $\beta_2$ term is a difference of always-treated
+CATTs across calendar time, which is identified from
+\eqref{eq:biascorr_moment} even when levels are not (see below).
+Equation~\eqref{eq:diff_moments} therefore constitutes an additional
+constraint on the \emph{dynamics} of $\mathrm{CATT}(g,\cdot)$ across
+post-treatment horizons. These constraints are not spanned by the
+$Q_{11}$ rows, which identify each CATT level independently, and
+hence contribute incremental identifying variation for $\beta_1$.
+
+\paragraph{Rank deficiency and normalization.}
+Every row of $Q_{22}$ encodes a first difference of $\beta_2$, so the
+vector $\mathbf{1}$ lies in its null space: adding a cohort-specific
+constant $\lambda_c$ to all CATTs of cohort $c$ leaves
+$Q_{22}\beta_2$ unchanged. Consequently, the augmented
+system~\eqref{eq:augmented_system} identifies $\beta_2$ only up to a
+per-cohort level shift. Recovering CATT levels for always-treated
+cohorts requires one normalization per cohort in $\mathcal{G}_0$
+--- for instance, setting $\mathrm{CATT}(c,t_0)$ to an externally
+motivated value at some anchor period $t_0$, or invoking a parametric
+restriction on the effect trajectory.
+
+\paragraph{Efficiency gain for within-sample CATTs.}
+Once a normalization is imposed, the augmented GMM estimator for
+$\beta_1$ draws on a strictly larger set of valid moment conditions
+than the baseline. By the efficiency bound for GMM
+\citep{hansen1982}, adding valid moments cannot increase asymptotic
+variance; the gain is nonzero whenever the residuals of the
+bias-corrected moments are not perfectly collinear with the column
+space of $Q_{11}$, which holds generically when always-treated
+cohorts exhibit distinct outcome dynamics relative to within-sample
+cohorts. In settings where the baseline moment system already
+provides rich identification of $\beta_1$, the marginal efficiency
+gain is likely modest; its value is greatest for early within-sample
+cohorts, whose pre-treatment window is short and whose baseline
+moments are therefore most sparse.
+
