@@ -566,3 +566,92 @@ for (i in seq_len(nrow(table_out)))
 save(res_hom, res_het, table_out,
      file="simulation_ar1_always_treated_results.RData")
 cat("\nResults saved to simulation_ar1_always_treated_results.RData\n")
+
+# =============================================================================
+# 12. Comprehensive per-scenario summary
+#
+# summarize_simulation() accepts the list returned by run_simulation() and
+# prints a full statistics table plus a focused efficiency comparison between
+# GMM-Eff and GMM-Eff-AT.  Call it for any scenario after results exist.
+#
+# Statistics reported per estimator:
+#   Mean      — average estimate across valid simulations
+#   Bias      — Mean − True ATT
+#   Std Dev   — standard deviation of estimates
+#   Variance  — Var of estimates (= Bias^2 + Variance decomposition target)
+#   RMSE      — root mean squared error = sqrt(Bias^2 + Variance)
+#   MAE       — mean absolute error (robust to outliers)
+#   N_valid   — simulations where estimator returned a non-NA value
+#
+# Efficiency block:
+#   Var ratio  — Var(GMM-Eff) / Var(GMM-Eff-AT); >1 means AT variant is tighter
+#   RMSE reduc — percentage RMSE reduction of AT variant over base GMM-Eff
+# =============================================================================
+
+summarize_simulation <- function(res, label) {
+  true_att <- res$true_att
+  results  <- res$results
+  ests     <- c("TWFE", "CS", "SA", "Gardner", "GMM_Eff", "GMM_Eff_AT")
+
+  cat(sprintf("\n%s\n", paste(rep("=", 74), collapse = "")))
+  cat(sprintf("  DETAILED SUMMARY: %-30s  True ATT = %.4f\n", label, true_att))
+  cat(sprintf("%s\n\n", paste(rep("=", 74), collapse = "")))
+
+  stats <- data.table(
+    Estimator = ests,
+    Mean    = sapply(ests, function(e) round(mean(na.omit(results[[e]])), 4)),
+    Bias    = sapply(ests, function(e) round(mean(na.omit(results[[e]])) - true_att, 4)),
+    Std_Dev = sapply(ests, function(e) round(sd(na.omit(results[[e]])), 4)),
+    Variance= sapply(ests, function(e) round(var(na.omit(results[[e]])), 4)),
+    RMSE    = sapply(ests, function(e) {
+                v <- na.omit(results[[e]])
+                round(sqrt(mean((v - true_att)^2)), 4) }),
+    MAE     = sapply(ests, function(e) {
+                v <- na.omit(results[[e]])
+                round(mean(abs(v - true_att)), 4) }),
+    N_valid = sapply(ests, function(e) sum(!is.na(results[[e]])))
+  )
+
+  # Main table
+  cat(sprintf("%-12s  %8s  %8s  %8s  %8s  %8s  %8s  %6s\n",
+              "Estimator", "Mean", "Bias", "Std.Dev",
+              "Variance", "RMSE", "MAE", "N"))
+  cat(paste(rep("-", 80), collapse = ""), "\n")
+  for (i in seq_len(nrow(stats)))
+    cat(sprintf("%-12s  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %8.4f  %6d\n",
+                stats$Estimator[i], stats$Mean[i],    stats$Bias[i],
+                stats$Std_Dev[i],   stats$Variance[i], stats$RMSE[i],
+                stats$MAE[i],       stats$N_valid[i]))
+
+  # Bias-variance decomposition check: MSE = Bias^2 + Variance
+  cat(sprintf("\n  MSE decomposition  (Bias^2 + Variance = RMSE^2):\n"))
+  cat(sprintf("  %-12s  %8s  %8s  %8s\n", "Estimator", "Bias^2", "Variance", "RMSE^2"))
+  cat(paste(rep("-", 46), collapse = ""), "\n")
+  for (i in seq_len(nrow(stats)))
+    cat(sprintf("  %-12s  %8.4f  %8.4f  %8.4f\n",
+                stats$Estimator[i],
+                round(stats$Bias[i]^2, 4),
+                stats$Variance[i],
+                round(stats$RMSE[i]^2, 4)))
+
+  # Efficiency comparison: GMM-Eff-AT vs GMM-Eff
+  e_base <- stats[Estimator == "GMM_Eff"]
+  e_at   <- stats[Estimator == "GMM_Eff_AT"]
+  if (nrow(e_base) == 1 && nrow(e_at) == 1) {
+    var_ratio  <- e_base$Variance / e_at$Variance
+    rmse_reduc <- 100 * (e_base$RMSE - e_at$RMSE) / e_base$RMSE
+    cat(sprintf("\n  Efficiency gain — GMM-Eff-AT vs GMM-Eff:\n"))
+    cat(sprintf("    Variance(GMM-Eff)  = %.4f\n", e_base$Variance))
+    cat(sprintf("    Variance(GMM-Eff-AT) = %.4f\n", e_at$Variance))
+    cat(sprintf("    Variance ratio (base / AT) = %.3f  ",  var_ratio))
+    cat(sprintf("[>1 means AT is more efficient]\n"))
+    cat(sprintf("    RMSE reduction             = %+.1f%%\n", rmse_reduc))
+  }
+
+  invisible(stats)
+}
+
+# --- Call summary for both scenarios ---
+cat("\n")
+sum_hom <- summarize_simulation(res_hom, "Homogeneous")
+sum_het <- summarize_simulation(res_het, "Heterogeneous")
