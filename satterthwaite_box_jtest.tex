@@ -1,0 +1,483 @@
+% ============================================================
+% Satterthwaite-Box Corrected J Test for GMM with Many
+% Correlated Moment Conditions
+%
+% Required packages: amsmath, amssymb, booktabs, tcolorbox,
+%                    geometry, hyperref, enumitem
+% ============================================================
+
+\section{A Corrected Overidentification Test via the
+         Satterthwaite--Box Approximation}
+\label{sec:jtest}
+
+% ── Why we need this section ────────────────────────────────────────────────
+The standard Hansen (1982) overidentification test --- the $J$ test ---
+checks whether the moment conditions imposed by our GMM estimator are
+consistent with the data.  Intuitively it asks: after choosing $\hat\beta$
+to make the moments as close to zero as possible, are the
+\emph{remaining} deviations small enough to be consistent with sampling
+noise?  If yes, we do not reject the model; if the deviations are too
+large, something is mis-specified.
+
+In our setting two features of the data make the standard $J$ test break
+down.  The goal of this section is to explain, step by step, what those
+problems are and exactly how the Satterthwaite--Box correction fixes them.
+We aim to make every step accessible to a reader who has seen basic
+statistics but not necessarily advanced econometrics.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Background: What the Standard J Test Does}
+\label{subsec:jtest_standard}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Suppose we have $m$ moment conditions stacked into a vector
+$\Delta \in \mathbb{R}^m$ and $k$ parameters $\beta \in \mathbb{R}^k$
+with $m > k$ (more conditions than parameters, i.e.\ the model is
+\emph{overidentified}).  The moment conditions say
+\begin{equation}
+  \mathbb{E}[\Delta - Q_H\beta] = \mathbf{0},
+  \label{eq:moments}
+\end{equation}
+where $Q_H$ is the $m\times k$ matrix that maps parameters to their
+predicted moment values.  At the true $\beta_0$ all $m$ conditions
+should hold on average.
+
+The GMM estimator picks $\hat\beta$ to make $\hat g \;{:=}\; \Delta - Q_H\hat\beta$
+as close to zero as possible in a weighted sense.  The residual vector
+$\hat g$ captures ``how well'' the model fits.  Ideally it should be
+small --- but not too small.
+
+The standard $J$ statistic is
+\begin{equation}
+  J \;=\; n\cdot \hat g'\,\hat\Omega^{-1}\,\hat g,
+  \label{eq:jstandard}
+\end{equation}
+where $n$ is the sample size and $\hat\Omega$ is an estimate of the
+covariance matrix of $\Delta$.  Under the null hypothesis that the model
+is correctly specified, $J \;\overset{d}{\longrightarrow}\; \chi^2(m - k)$.
+The degrees of freedom $m-k$ count the number of overidentifying
+restrictions --- the number of moment conditions left over after
+identifying all $k$ parameters.
+
+\medskip
+\noindent\textbf{When does this work?}  The derivation of $J\sim\chi^2(m-k)$
+requires two things: (i)~$\hat\Omega$ is invertible, and (ii)~$\hat\beta$
+is estimated using the same $\hat\Omega^{-1}$ as the weighting matrix
+(efficient GMM).  Both conditions fail in our setting.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Problem 1: The Covariance Matrix is Singular}
+\label{subsec:singularity}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{What singularity means.}
+A matrix is \emph{singular} if it has no inverse.  Think of a $2\times2$
+matrix whose two rows are identical: you cannot invert it because the
+two rows carry the same information.  More generally, if a matrix has
+fewer independent directions than it has rows, it is singular and
+$\hat\Omega^{-1}$ in~\eqref{eq:jstandard} cannot be computed.
+
+\paragraph{Why $\hat\Omega$ is singular here.}
+Every one of our $m$ DiD moment conditions has the form
+\begin{equation}
+  \Delta_{g,c,s,t}
+    = \bar Y_g(t) - \bar Y_g(s) - \bar Y_c(t) + \bar Y_c(s),
+  \label{eq:did_form}
+\end{equation}
+where $\bar Y_g(t)$ is the average outcome of cohort $g$ at time $t$.
+All $m$ moments are constructed from the same small set of
+\emph{cohort-time averages} $\{\bar Y_g(t)\}$.  If there are $G$
+cohorts and $T$ time periods, there are at most $G\times T$ distinct
+averages --- yet $m$ can be thousands.
+
+\medskip
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40, title=Simple analogy]
+Suppose you have three numbers: $A$, $B$, $C$.
+You compute six ``moments'':
+\[
+  A-B,\quad B-C,\quad A-C,\quad 2A-B-C,\quad A+B-2C,\quad A-2B+C.
+\]
+No matter how many moments you compute, they all live in a
+three-dimensional space (the span of $A$, $B$, $C$).
+Their $6\times6$ covariance matrix has rank at most 3.
+Inverting a $6\times6$ matrix of rank 3 is impossible.
+\end{tcolorbox}
+\medskip
+
+In our application with $m = 5{,}829$ DiD moments built from roughly
+$G\times T \approx 1{,}000$ cohort-time averages, the covariance matrix
+$\hat\Omega$ has rank at most ${\sim}1{,}000$.  Computing
+$\hat\Omega^{-1}$ directly is impossible.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Problem 2: Downward Bias from Full-Sample Estimation}
+\label{subsec:downward_bias}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{What the bias is.}
+In efficient GMM, $\hat\beta$ is chosen by minimising
+$(\Delta - Q_H\beta)'\hat\Omega^{-1}(\Delta - Q_H\beta)$.
+The first-order conditions are
+\begin{equation}
+  Q_H'\,\hat\Omega^{-1}\,\hat g \;=\; \mathbf{0}.
+  \label{eq:foc}
+\end{equation}
+This says the residuals $\hat g$ are \emph{forced} to be orthogonal
+(in the $\hat\Omega^{-1}$ metric) to the columns of $Q_H$.
+As a result $\hat g$ is as small as possible in the weighted norm ---
+the estimator ``uses up'' the data to shrink the residuals.
+
+When you then compute $J = n\cdot\hat g'\hat\Omega^{-1}\hat g$, you are
+measuring the length of residuals that have already been minimised.
+They are smaller than they would be at the true $\beta_0$, so
+$\mathbb{E}[J] < m - k$ in finite samples.  The $J$ statistic is
+\emph{biased downward}: it makes the model look better-fitting than it
+really is, leading to under-rejection.
+
+\medskip
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40,
+  title=Simple analogy]
+Imagine throwing darts at a board and measuring the average miss
+distance.  If someone is \emph{allowed to move the board after seeing
+where the darts land}, the board will always end up close to the darts
+--- the measured ``miss'' is artificially small.  Using $\hat\beta$ from
+the full set of moments is like moving the board: the residuals look
+small because the estimator was specifically chosen to make them small.
+\end{tcolorbox}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{The Corrected Procedure, Step by Step}
+\label{subsec:procedure}
+% ─────────────────────────────────────────────────────────────────────────────
+
+We now describe the full corrected procedure.  Each step is paired with
+an explanation of which problem it addresses.
+
+% ── Step 1 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 1: Estimate $\hat\beta$ from a \emph{restricted} set of
+moments.}
+
+Choose a subset of $k$ moment conditions --- just enough to identify
+all $k$ parameters.  This is called the \emph{just-identified} or
+\emph{restricted} set.  Solve the $k$ equations
+\begin{equation}
+  \Delta_{\text{res}} - Q_{H,\text{res}}\,\hat\beta_r \;=\; \mathbf{0}
+  \label{eq:restricted_est}
+\end{equation}
+exactly for $\hat\beta_r$, where the subscript ``res'' denotes the
+chosen subset.
+
+\medskip
+\noindent\textbf{Why this fixes Problem 2.}  The restricted estimator
+$\hat\beta_r$ satisfies the first-order conditions
+\eqref{eq:foc} \emph{only for the $k$ restricted moments}, not for the
+remaining $m - k$ overidentifying moments.  Those overidentifying
+residuals are free to reflect genuine specification error.  We are no
+longer moving the board after seeing all the darts --- we fix the board
+using a small held-out subset of darts and check the rest honestly.
+
+% ── Step 2 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 2: Compute residuals using \emph{all} $m$ moments.}
+
+Plug $\hat\beta_r$ into the full set of moment conditions to get the
+residual vector
+\begin{equation}
+  \hat g \;=\; \Delta - Q_H\,\hat\beta_r \;\in\; \mathbb{R}^m.
+  \label{eq:residuals}
+\end{equation}
+The first $k$ elements of $\hat g$ are zero by construction
+(from~\eqref{eq:restricted_est}); the remaining $m - k$ elements
+are the overidentifying residuals we want to test.
+
+% ── Step 3 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 3: Estimate the covariance matrix $\hat\Omega$.}
+
+Estimate $\hat\Omega$ from the data as described in
+Section~\ref{sec:gmm}.  This is an $m\times m$ matrix.  It is
+rank-deficient (rank $\leq G\times T \ll m$) --- that is the root cause
+of Problem 1.  We do \emph{not} try to invert it directly.
+
+% ── Step 4 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 4: Form a regularised weighting matrix.}
+
+Rather than inverting $\hat\Omega$ (which we cannot do), add a small
+positive constant $\varepsilon$ to every diagonal element and invert
+the result:
+\begin{equation}
+  W \;=\; \bigl(\hat\Omega + \varepsilon I_m\bigr)^{-1},
+  \label{eq:reg_inv}
+\end{equation}
+where $I_m$ is the $m\times m$ identity matrix and $\varepsilon > 0$
+is a small regularisation parameter (e.g.\ $\varepsilon = 10^{-6}$).
+
+\medskip
+\noindent\textbf{Why this addresses Problem 1.}
+Adding $\varepsilon$ to the diagonal nudges all eigenvalues of
+$\hat\Omega$ away from zero, making the matrix positive definite and
+invertible.  Directions where $\hat\Omega$ has near-zero eigenvalues
+(the ``redundant'' moment directions from Section~\ref{subsec:singularity})
+end up receiving weight approximately $1/\varepsilon$ in $W$, which is
+large.  We will correct for this distortion in Step 6.
+
+\medskip
+\noindent Compute the raw test statistic
+\begin{equation}
+  T \;=\; \hat g'\,W\,\hat g
+        \;=\; \hat g'\bigl(\hat\Omega + \varepsilon I_m\bigr)^{-1}\hat g.
+  \label{eq:raw_stat}
+\end{equation}
+
+% ── Step 5 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 5: Understand the distribution of $T$.}
+
+If $\hat\Omega$ were the \emph{true} $\Omega$ and $m$ moments were all
+independent, $T$ would follow $\chi^2(m-k)$ under the null.  Neither
+condition holds here.
+
+To see what $T$ actually follows, note that under the null hypothesis
+$T$ is a \emph{weighted sum of independent chi-squared(1) variables}:
+\begin{equation}
+  T \;\overset{d}{\approx}\;
+    \sum_{i=1}^{m} \eta_i\, Z_i^2,
+    \qquad Z_i \overset{iid}{\sim} N(0,1),
+  \label{eq:weighted_chisq}
+\end{equation}
+where $\eta_1,\ldots,\eta_m$ are the eigenvalues of the matrix
+\begin{equation}
+  A \;:=\; W\hat\Omega
+          \;=\; \bigl(\hat\Omega + \varepsilon I_m\bigr)^{-1}\hat\Omega.
+  \label{eq:A_matrix}
+\end{equation}
+
+\medskip
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40,
+  title=What are these eigenvalues $\eta_i$?]
+If $\hat\Omega$ has eigenvalues $\lambda_1 \geq \lambda_2 \geq \cdots \geq \lambda_m \geq 0$,
+then $A = (\hat\Omega + \varepsilon I)^{-1}\hat\Omega$ has eigenvalues
+\[
+  \eta_i \;=\; \frac{\lambda_i}{\lambda_i + \varepsilon}.
+\]
+\begin{itemize}[noitemsep]
+  \item Directions with \textbf{large} $\lambda_i$ (genuine signal):
+        $\eta_i \approx 1$.
+  \item Directions with \textbf{near-zero} $\lambda_i$ (redundant
+        moments, the null space of $\hat\Omega$): $\eta_i \approx 0$.
+\end{itemize}
+So $A$ acts like a smooth projection: it assigns nearly full weight
+to informative directions and nearly zero weight to redundant ones.
+\end{tcolorbox}
+
+\medskip
+\noindent Because the $\eta_i$ are not all equal, $T$ is \emph{not}
+chi-squared for any standard degrees of freedom.  This is where the
+Satterthwaite--Box approximation enters.
+
+% ── Step 6 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 6: Apply the Satterthwaite--Box approximation.}
+
+The idea is simple: approximate the distribution of $T$ by a
+\emph{scaled} chi-squared, $T \approx c\cdot\chi^2(\nu)$, where the
+scale $c$ and degrees of freedom $\nu$ are chosen to match the first
+two moments of $T$.
+
+\subparagraph{First moment (mean) of $T$.}
+\begin{equation}
+  \mathbb{E}[T]
+    \;=\; \sum_{i=1}^{m}\eta_i
+    \;=\; \operatorname{tr}(A)
+    \;=\; \operatorname{tr}\!\bigl((\hat\Omega+\varepsilon I)^{-1}\hat\Omega\bigr).
+  \label{eq:ET}
+\end{equation}
+\textit{In words}: the expected value of $T$ equals the sum of the
+effective weights.  If all moments were independent ($\hat\Omega$
+diagonal), this would just equal $m - k$ --- the classical degrees
+of freedom.  With redundant moments, it is much smaller.
+
+\subparagraph{Second moment (variance) of $T$.}
+\begin{equation}
+  \operatorname{Var}(T)
+    \;=\; 2\sum_{i=1}^{m}\eta_i^2
+    \;=\; 2\operatorname{tr}(A^2)
+    \;=\; 2\operatorname{tr}\!\bigl((\hat\Omega+\varepsilon I)^{-1}\hat\Omega\bigr)^2.
+  \label{eq:VarT}
+\end{equation}
+
+\subparagraph{Matching moments.}
+Set $c$ and $\nu$ so that $\mathbb{E}[c\chi^2(\nu)] = \mathbb{E}[T]$
+and $\operatorname{Var}[c\chi^2(\nu)] = \operatorname{Var}(T)$:
+\begin{align}
+  c\,\nu       &= \operatorname{tr}(A),                  \label{eq:match1}\\
+  2c^2\,\nu    &= 2\operatorname{tr}(A^2).                \label{eq:match2}
+\end{align}
+Dividing~\eqref{eq:match2} by~\eqref{eq:match1} gives $c$; then $\nu$
+follows:
+\begin{equation}
+  \boxed{
+    c \;=\; \frac{\operatorname{tr}(A^2)}{\operatorname{tr}(A)},
+    \qquad
+    \nu \;=\; \frac{\bigl[\operatorname{tr}(A)\bigr]^2}{\operatorname{tr}(A^2)}.
+  }
+  \label{eq:cnu}
+\end{equation}
+Note that $c\nu = \operatorname{tr}(A) = \mathbb{E}[T]$, so $T/c$ has
+mean $\nu$ under the null, consistent with $T/c \sim \chi^2(\nu)$.
+
+\medskip
+\begin{tcolorbox}[colback=gray!8, colframe=gray!40,
+  title=Intuition behind $c$ and $\nu$]
+Think of $\nu$ as the \emph{effective number of independent moments}
+after accounting for redundancy.  If all $m$ moments were truly
+independent ($\eta_i = 1$ for all $i$), then $\operatorname{tr}(A)=m$,
+$\operatorname{tr}(A^2)=m$, so $c=1$ and $\nu=m$ --- exactly the
+classical result.  As moments become more redundant (many $\eta_i$
+near zero), $\operatorname{tr}(A^2)/\operatorname{tr}(A)$ grows because
+variance is dominated by fewer large $\eta_i$, and the effective degrees
+of freedom $\nu$ shrinks accordingly.
+\end{tcolorbox}
+
+% ── Step 7 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 7: Account for estimated parameters.}
+
+The derivation above treats $\beta_0$ as known.  Because we estimated
+$k$ parameters in Step~1, we lose $k$ degrees of freedom.  Reduce the
+effective degrees of freedom by $k$:
+\begin{equation}
+  \nu^* \;=\; \nu - k
+            \;=\; \frac{\bigl[\operatorname{tr}(A)\bigr]^2}{\operatorname{tr}(A^2)}
+              - k.
+  \label{eq:nu_corrected}
+\end{equation}
+The corrected test statistic is
+\begin{equation}
+  J^* \;=\; \frac{T}{c}
+           \;=\; \frac{\hat g'W\hat g \cdot \operatorname{tr}(A)}
+                      {\operatorname{tr}(A^2)},
+  \label{eq:jstar}
+\end{equation}
+which is compared to the $\chi^2(\nu^*)$ distribution.
+
+% ── Step 8 ──────────────────────────────────────────────────────────────────
+\paragraph{Step 8: Compute the $p$-value and make a decision.}
+
+\begin{equation}
+  p\text{-value} \;=\; \Pr\!\bigl(\chi^2(\nu^*) \;>\; J^*\bigr).
+  \label{eq:pvalue}
+\end{equation}
+Reject the null hypothesis of correct specification at significance
+level $\alpha$ if $p < \alpha$, or equivalently if
+$J^* > \chi^2_\alpha(\nu^*)$ (the upper-$\alpha$ quantile of
+$\chi^2(\nu^*)$).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{How Each Step Solves a Specific Problem}
+\label{subsec:recap}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Table~\ref{tab:correction_summary} summarises how the procedure above
+addresses the two failures of the standard $J$ test.
+
+\begin{table}[htbp]
+\centering
+\caption{Problems with the Standard $J$ Test and Their Corrections}
+\label{tab:correction_summary}
+\begin{tabular}{p{3.2cm} p{4.5cm} p{4.5cm}}
+\toprule
+ & \textbf{Singularity of $\hat\Omega$}
+ & \textbf{Downward Bias} \\
+\midrule
+\textit{Root cause}
+  & All $m$ DiD moments are built from $\leq G\times T$ cohort-time
+    averages, so $\hat\Omega$ has rank $\ll m$.
+  & $\hat\beta$ from the full set forces residuals orthogonal to $Q_H$
+    in the $\hat\Omega^{-1}$ metric, making $\hat g$ artificially small.\\[6pt]
+\textit{Consequence}
+  & $\hat\Omega^{-1}$ does not exist; $J$ cannot be computed.
+    Even with a pseudo-inverse, the $\chi^2(m-k)$ distribution does
+    not apply.
+  & $\mathbb{E}[J] < m - k$; the test under-rejects --- the model
+    looks better than it is. \\[6pt]
+\textit{Fix}
+  & Steps 4--6: replace $\hat\Omega^{-1}$ with regularised $W$;
+    apply Satterthwaite--Box to obtain corrected scale $c$ and
+    effective d.f.\ $\nu$.
+  & Step 1: estimate $\hat\beta$ from a restricted (just-identified)
+    subset of moments; the overidentifying residuals are then
+    unconstrained. \\[6pt]
+\textit{Intuition}
+  & The effective d.f.\ $\nu = [\mathrm{tr}(A)]^2/\mathrm{tr}(A^2)$
+    automatically counts only the independent directions in the moment
+    space, discarding redundant ones.
+  & By using a held-out set of moments for testing, we stop
+    ``moving the board after seeing the darts.'' \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Complete Algorithm}
+\label{subsec:algorithm}
+% ─────────────────────────────────────────────────────────────────────────────
+
+For convenience, we collect the full corrected procedure below.
+
+\begin{enumerate}[label=\textbf{Step \arabic*.}, leftmargin=*, itemsep=4pt]
+
+  \item \textbf{Restricted estimation.}
+        Choose $k$ linearly independent moment conditions (one per
+        parameter).  Solve $\Delta_{\mathrm{res}} =
+        Q_{H,\mathrm{res}}\hat\beta_r$ to obtain $\hat\beta_r$.
+        \emph{(Fixes downward bias.)}
+
+  \item \textbf{Full residuals.}
+        Compute $\hat g = \Delta - Q_H\hat\beta_r \in \mathbb{R}^m$.
+
+  \item \textbf{Covariance estimation.}
+        Estimate $\hat\Omega$ using the autocovariance / $R\Omega_v R'$
+        method described in Section~\ref{sec:gmm}.
+
+  \item \textbf{Regularised weighting.}
+        Set $W = (\hat\Omega + \varepsilon I_m)^{-1}$.
+        \emph{(Makes inversion feasible; fixes singularity.)}
+
+  \item \textbf{Raw test statistic.}
+        Compute $T = \hat g' W \hat g$.
+
+  \item \textbf{Effective-weight matrix.}
+        Compute $A = W\hat\Omega = (\hat\Omega+\varepsilon I)^{-1}\hat\Omega$.
+
+  \item \textbf{Satterthwaite--Box parameters.}
+        \[
+          c \;=\; \frac{\operatorname{tr}(A^2)}{\operatorname{tr}(A)},
+          \qquad
+          \nu^* \;=\; \frac{[\operatorname{tr}(A)]^2}{\operatorname{tr}(A^2)} - k.
+        \]
+        \emph{($\nu^*$ is the effective degrees of freedom after
+        accounting for moment redundancy and parameter estimation.)}
+
+  \item \textbf{Corrected test statistic.}
+        \[
+          J^* \;=\; T/c.
+        \]
+
+  \item \textbf{Inference.}
+        Reject $H_0$ (correct specification) at level $\alpha$ if
+        \[
+          J^* \;>\; \chi^2_\alpha(\nu^*),
+          \qquad
+          \text{or equivalently}\quad
+          p = \Pr(\chi^2(\nu^*)>J^*) < \alpha.
+        \]
+
+\end{enumerate}
+
+\medskip
+\begin{tcolorbox}[colback=blue!5, colframe=blue!30,
+  title=Practical note on $\varepsilon$]
+The regularisation parameter $\varepsilon$ should be small relative to
+the typical non-zero eigenvalues of $\hat\Omega$ but large relative to
+numerical noise.  A common choice is $\varepsilon = 10^{-6}$ times
+the maximum eigenvalue of $\hat\Omega$.  Sensitivity of $J^*$ and
+$\nu^*$ to $\varepsilon$ can be checked by repeating with
+$\varepsilon \in \{10^{-4}, 10^{-6}, 10^{-8}\}$; stable results across
+this range indicate the correction is reliable.
+\end{tcolorbox}
