@@ -66,14 +66,30 @@ tau_it[g_id == 2L & time_id == 2L] <- true_catt["beta_22"]
 tau_it[g_id == 2L & time_id == 3L] <- true_catt["beta_23"]
 tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
 
+# AR(1) persistence parameter: epsilon_it = rho * epsilon_{i,t-1} + u_it
+# u_it ~ N(0, sigma_u^2), initialised from stationary distribution N(0, 1/(1-rho^2))
+rho     <- 0.7
+sigma_u <- sqrt(1 - rho^2)   # innovation sd so Var[epsilon_it] = 1
+
 # ===========================================================================
 # 2. Data-Generating Function
 # ===========================================================================
 
 generate_data <- function() {
-  alpha_i <- rnorm(N_total, mean = 0, sd = 1)          # unit FEs ~ N(0,1)
-  epsilon  <- rnorm(N_total * T_total, mean = 0, sd = 1) # errors  ~ N(0,1)
-  Y_it     <- baseline + alpha_i[unit_id] + tau_it + epsilon
+  alpha_i <- rnorm(N_total, mean = 0, sd = 1)   # unit FEs ~ N(0,1)
+
+  # AR(1) errors: independent across units, correlated over time within unit
+  epsilon <- numeric(N_total * T_total)
+  for (i in seq_len(N_total)) {
+    idx          <- (i - 1L) * T_total + seq_len(T_total)
+    eps_i        <- numeric(T_total)
+    eps_i[1L]    <- rnorm(1, 0, 1 / sqrt(1 - rho^2))   # stationary init
+    for (t in 2:T_total)
+      eps_i[t]   <- rho * eps_i[t - 1L] + rnorm(1, 0, sigma_u)
+    epsilon[idx] <- eps_i
+  }
+
+  Y_it <- baseline + alpha_i[unit_id] + tau_it + epsilon
 
   dt <- data.table(unit = unit_id, time = time_id,
                    g = g_id, D = D_it, Y = Y_it)
