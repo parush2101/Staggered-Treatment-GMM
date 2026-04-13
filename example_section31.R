@@ -268,14 +268,11 @@ estimate_gmm_efficient <- function(dt, max_iter = 10, tol = 1e-8) {
       dt_r[g == 3L & time == 3L, Y_adj := Y - beta_hat[3L]]
 
       # (b) Estimate autocovariances sigma_d, d = 0, ..., T_total
-      # Exclude g=1 (always-treated): their treatment effects are unidentified
-      # so Y_adj still contains large mechanical shifts (+5, -85), which would
-      # corrupt the cross-lag covariance estimates and hence Omega_phi.
       sigma_d <- numeric(T_total + 1L)
       for (d in 0:T_total) {
         dt_r[, Y_lag := shift(Y_adj, d, type = "lag"), by = unit]
         sigma_d[d + 1L] <- dt_r[
-          g != 1L & !is.na(Y_lag),
+          !is.na(Y_lag),
           mean((Y_adj - mean(Y_adj)) * (Y_lag - mean(Y_lag)))
         ]
       }
@@ -340,7 +337,7 @@ for (s in seq_len(n_sims)) {
   att_matrix[s, "Flex_TWFE"]     <- estimate_flex_twfe(dt_s)
   att_matrix[s, "CS"]            <- estimate_cs(dt_s)
   att_matrix[s, "Gardner"]       <- estimate_gardner(dt_s)
-  att_matrix[s, "GMM_Efficient"] <- estimate_gmm_efficient(dt_s)
+  att_matrix[s, "GMM_Efficient"] <- estimate_gmm_efficient(dt_s[g != 1L])
 
   cat(sprintf(
     "  Iter %2d:  Flex=%.3f  CS=%.3f  Gardner=%.3f  GMM_Eff=%.3f\n",
