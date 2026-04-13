@@ -1,11 +1,12 @@
 ###############################################################################
-# Section 3.1 Example: Three Cohorts, Three Time Periods
+# Section 3.1 Example: Four Cohorts, Three Time Periods
 # Arora & Bijani (2026), Figure 1 and Equation (7)
 #
-# Cohort-time mean outcomes (Eq. 7):
-#   Never-treated (g = 0): {Y_1, Y_2, Y_3} = {100, 100, 100}
-#   Early-treated (g = 2): {Y_1, Y_2, Y_3} = {110, 130, 125}
-#   Late-treated  (g = 3): {Y_1, Y_2, Y_3} = {140, 140, 165}
+# Cohort-time mean outcomes:
+#   Never-treated   (g = 0): {Y_1, Y_2, Y_3} = {100, 100, 100}
+#   Always-treated  (g = 1): {Y_1, Y_2, Y_3} = {150, 155,  65}  [unidentifiable CATTs]
+#   Early-treated   (g = 2): {Y_1, Y_2, Y_3} = {110, 130, 125}
+#   Late-treated    (g = 3): {Y_1, Y_2, Y_3} = {140, 140, 165}
 #
 # True CATTs under parallel trends (verified on page 7):
 #   beta_22 = 20  (g=2, t=2: impact period)
@@ -17,10 +18,13 @@
 #   alpha_i   : unit fixed effect ~ N(0, 1)
 #   tau_gt    : true CATT (0 in pre-treatment periods)
 #   epsilon_it: idiosyncratic error ~ MVN(0, Sigma_nt)
-#              Sigma_nt: full 900x900, heteroskedastic + non-zero cross-unit/time cov
+#              Sigma_nt: full 1200x1200, heteroskedastic + non-zero cross-unit/time cov
 #              (factor model: F_load %*% t(F_load) + diag(D_var), guaranteed PD)
 #
-# Cohort size: 100 units each (300 total).
+# Cohort size: 100 units each (400 total).
+# Always-treated (g=1): D_it = 1 for all t; CATTs unidentifiable (no pre-period).
+#   CS and Gardner exclude g=1. Flex TWFE and GMM include g=1 in data but
+#   ATT is aggregated only over identifiable cohorts g=2 and g=3.
 # Estimation: Flexible TWFE (Wooldridge 2025).
 # Simulation: 10 iterations; reports bias and variance of the aggregated ATT.
 ###############################################################################
@@ -39,13 +43,18 @@ set.seed(42)
 n_sims      <- 10
 cohort_size <- 100
 T_total     <- 3
-N_total     <- 3L * cohort_size   # 300
+N_total     <- 4L * cohort_size   # 400 (4 cohorts)
 
-# Cohort membership (g): 0 = never-treated, 2 = treated from t=2, 3 = from t=3
-g_cohort <- c(rep(0L, cohort_size), rep(2L, cohort_size), rep(3L, cohort_size))
+# Cohort membership:
+#   g = 0 : never-treated
+#   g = 1 : always-treated (D_it = 1 for all t; CATTs unidentifiable)
+#   g = 2 : treated from t = 2
+#   g = 3 : treated from t = 3
+g_cohort <- c(rep(0L, cohort_size), rep(1L, cohort_size),
+              rep(2L, cohort_size), rep(3L, cohort_size))
 
-# Cohort baseline intercepts (match pre-treatment means in Eq. 7)
-mu_g <- c("0" = 100, "2" = 110, "3" = 140)
+# Cohort baseline intercepts (match pre-treatment means / t=1 levels)
+mu_g <- c("0" = 100, "1" = 150, "2" = 110, "3" = 140)
 
 # True CATTs from the paper
 true_catt <- c(beta_22 = 20, beta_23 = 15, beta_33 = 25)
@@ -60,20 +69,25 @@ time_id <- rep(seq_len(T_total), times = N_total)
 g_id    <- g_cohort[unit_id]
 baseline <- mu_g[as.character(g_id)]
 
-D_it <- as.integer((g_id == 2L & time_id >= 2L) |
-                   (g_id == 3L & time_id >= 3L))
+D_it <- as.integer( (g_id == 1L)                 |   # always treated (all periods)
+                    (g_id == 2L & time_id >= 2L) |
+                    (g_id == 3L & time_id >= 3L))
 
 tau_it <- numeric(N_total * T_total)
 tau_it[g_id == 2L & time_id == 2L] <- true_catt["beta_22"]
 tau_it[g_id == 2L & time_id == 3L] <- true_catt["beta_23"]
 tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
+# Always-treated (g=1): tau encodes observed mean deviations from mu_g["1"]=150
+# Observed means {150, 155, 65} => increments: t=1: 0, t=2: +5, t=3: -85
+tau_it[g_id == 1L & time_id == 2L] <- 5
+tau_it[g_id == 1L & time_id == 3L] <- -85
 
 # Full NT x NT error covariance: heteroskedastic diagonal + non-zero covariance
 # across ALL (i,t) and (j,s) pairs (cross-unit AND cross-time).
 # Factor model: Sigma_nt = F_load %*% t(F_load) + diag(D_var)  [guaranteed PD]
 # Pre-computed once; fixed across all simulation draws.
 {
-  NT      <- N_total * T_total   # 900
+  NT      <- N_total * T_total   # 1200
   k_fac   <- 5L
   set.seed(123)                  # separate seed so Sigma is stable
   F_load  <- matrix(rnorm(NT * k_fac, sd = 0.4), nrow = NT, ncol = k_fac)
@@ -118,7 +132,8 @@ setnames(means_check, as.character(1:T_total), paste0("t=", 1:T_total))
 cat("=======================================================\n")
 cat("  DGP Verification: Cohort-Time Means (one draw)\n")
 cat("=======================================================\n")
-cat("  Expected: {100,100,100}, {110,130,125}, {140,140,165}\n\n")
+cat("  g=0: {100,100,100}  g=1: {150,155,65}\n")
+cat("  g=2: {110,130,125}  g=3: {140,140,165}\n\n")
 print(means_check)
 cat("\n")
 
@@ -130,7 +145,7 @@ cat("\n")
 estimate_flex_twfe <- function(dt) {
   tryCatch({
     mod <- feols(Y ~ i(cohort_time, ref = "ref") | unit + time,
-                 data = dt, warn = FALSE)
+                 data = dt, warn = FALSE, notes = FALSE)
     coef_raw        <- coef(mod)
     names(coef_raw) <- gsub("cohort_time::", "", names(coef_raw))
     mean(coef_raw[catt_keys])
@@ -139,13 +154,15 @@ estimate_flex_twfe <- function(dt) {
 
 # --- Callaway & Sant'Anna (2021) -------------------------------------------
 # Uses never-treated (g = 0) as control; aggregates to simple ATT.
+# Always-treated (g = 1) excluded: no pre-treatment period available, so
+# att_gt cannot form a pre/post DiD for that cohort.
 estimate_cs <- function(dt) {
   tryCatch({
     out <- att_gt(yname    = "Y",
                   tname    = "time",
                   idname   = "unit",
                   gname    = "g",
-                  data     = as.data.frame(dt),
+                  data     = as.data.frame(dt[g != 1L]),
                   control_group = "nevertreated",
                   print_details = FALSE,
                   bstrap   = FALSE,
@@ -157,9 +174,11 @@ estimate_cs <- function(dt) {
 # --- Gardner (did2s, 2024) -------------------------------------------------
 # Two-stage DiD: first stage removes unit + time FEs from untreated obs;
 # second stage regresses on treatment indicator.
+# Always-treated (g = 1) excluded: their unit FEs cannot be estimated in
+# stage 1 (no D = 0 observations), biasing stage-2 residuals.
 estimate_gardner <- function(dt) {
   tryCatch({
-    dt_g <- copy(dt)
+    dt_g <- dt[g != 1L]   # exclude always-treated before copying
     dt_g[, first_treat := fifelse(g == 0L, Inf, as.numeric(g))]
     mod <- did2s(data         = as.data.frame(dt_g),
                  yname        = "Y",
