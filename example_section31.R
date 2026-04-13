@@ -82,19 +82,35 @@ tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
 tau_it[g_id == 1L & time_id == 2L] <- 5
 tau_it[g_id == 1L & time_id == 3L] <- -85
 
-# Full NT x NT error covariance: heteroskedastic diagonal + non-zero covariance
-# across ALL (i,t) and (j,s) pairs (cross-unit AND cross-time).
-# Factor model: Sigma_nt = F_load %*% t(F_load) + diag(D_var)  [guaranteed PD]
-# Pre-computed once; fixed across all simulation draws.
+# Two separate factor-model covariance matrices (both guaranteed PD):
+#
+#  L_chol_main : 900x900, for g=0/2/3 (300 units x 3 periods).
+#                Drawn with set.seed(123) — IDENTICAL to the 3-cohort DGP,
+#                so GMM operates on exactly the same error structure as before.
+#
+#  L_chol_g1   : 300x300, for g=1 (100 units x 3 periods).
+#                Separate draw; g=1 is excluded from GMM anyway.
+#
+# Observation ordering in the 1200-vector:
+#   obs   1– 300 : g=0   obs 301– 600 : g=1
+#   obs 601– 900 : g=2   obs 901–1200 : g=3
+# eps_main maps to g=0 (1-300), g=2 (301-600), g=3 (601-900) — same layout
+# as the original 3-cohort 900-vector.
 {
-  NT      <- N_total * T_total   # 1200
-  k_fac   <- 5L
-  set.seed(123)                  # separate seed so Sigma is stable
-  F_load  <- matrix(rnorm(NT * k_fac, sd = 0.4), nrow = NT, ncol = k_fac)
-  D_var   <- runif(NT, min = 0.5, max = 2.0)
-  Sigma_nt <- tcrossprod(F_load) + diag(D_var)
-  L_chol   <- t(chol(Sigma_nt))   # lower-triangular Cholesky; epsilon = L_chol %*% z
-  rm(F_load, D_var)               # free memory; only L_chol needed
+  k_fac <- 5L
+  set.seed(123)
+  F_m <- matrix(rnorm(900L * k_fac, sd = 0.4), nrow = 900L, ncol = k_fac)
+  D_m <- runif(900L, min = 0.5, max = 2.0)
+  L_chol_main <- t(chol(tcrossprod(F_m) + diag(D_m)))
+  rm(F_m, D_m)
+}
+{
+  k_fac <- 5L
+  set.seed(456)
+  F_g1 <- matrix(rnorm(300L * k_fac, sd = 0.4), nrow = 300L, ncol = k_fac)
+  D_g1 <- runif(300L, min = 0.5, max = 2.0)
+  L_chol_g1 <- t(chol(tcrossprod(F_g1) + diag(D_g1)))
+  rm(F_g1, D_g1)
 }
 
 # ===========================================================================
@@ -104,9 +120,16 @@ tau_it[g_id == 1L & time_id == 3L] <- -85
 generate_data <- function() {
   alpha_i <- rnorm(N_total, mean = 0, sd = 1)   # unit FEs ~ N(0,1)
 
-  # Full NT x NT covariance: draw epsilon ~ MVN(0, Sigma_nt) via Cholesky
-  # L_chol pre-computed above; ordering is (unit1,t1),(unit1,t2),...,(unitN,tT)
-  epsilon <- as.numeric(L_chol %*% rnorm(N_total * T_total))
+  # Draw errors from the two pre-computed Cholesky factors and slot into
+  # the correct positions of the 1200-element epsilon vector.
+  eps_main <- as.numeric(L_chol_main %*% rnorm(900L))  # g=0, g=2, g=3
+  eps_g1   <- as.numeric(L_chol_g1   %*% rnorm(300L))  # g=1
+
+  epsilon            <- numeric(N_total * T_total)
+  epsilon[  1:300]   <- eps_main[  1:300]   # g=0
+  epsilon[301:600]   <- eps_g1              # g=1
+  epsilon[601:900]   <- eps_main[301:600]   # g=2
+  epsilon[901:1200]  <- eps_main[601:900]   # g=3
 
   Y_it <- baseline + alpha_i[unit_id] + tau_it + epsilon
 
