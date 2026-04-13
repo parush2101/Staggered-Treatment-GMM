@@ -162,11 +162,16 @@ estimate_gardner <- function(dt) {
 #   D6: forbidden (g=2 already treated control) -> Q_H[6,] = [ 1, -1,  1]
 #        E[D6] = beta_33 - (beta_23 - beta_22); bias-corrected in Q_H.
 #
-# Iteration: (1) initial A=I estimate, (2) subtract treatment effects to get
-# treatment-free Y_adj, (3) estimate autocovariances sigma_d from Y_adj,
-# (4) build Omega_phi via structural covariance formulas (paper Eq. 31),
-# (5) update beta with A = Omega_phi^{-1}, repeat until convergence.
-estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
+# Iterated GMM (Hansen et al. 1996):
+#   Step 0 : initial beta from A = I
+#   While not converged:
+#     (a) subtract current beta to get treatment-free Y_adj
+#     (b) estimate autocovariances sigma_d from Y_adj
+#     (c) build Omega_phi via structural covariance formulas (paper Eq. 31)
+#     (d) update beta = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta
+#     (e) check convergence on BOTH beta and Omega_phi; stop when both
+#         change by less than tol across successive iterations.
+estimate_gmm_efficient <- function(dt, max_iter = 50, tol = 1e-8) {
   tryCatch({
     # ---- Fixed metadata for the 6 DiDs in this DGP ----
     meta_fg <- c(2L, 2L, 3L, 3L, 2L, 3L)   # focal cohort
@@ -198,10 +203,11 @@ estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
       (m(3,3) - m(3,2)) - (m(2,3) - m(2,2))    # D6
     )
 
-    # ---- Initial estimate: A = I ----
-    beta_hat <- as.numeric(solve(crossprod(Q_H), crossprod(Q_H, Delta)))
+    # ---- Step 0: initial estimate with A = I ----
+    beta_hat  <- as.numeric(solve(crossprod(Q_H), crossprod(Q_H, Delta)))
+    Omega_old <- diag(n_did)   # placeholder for convergence check
 
-    # ---- Lag-distance matrices (fixed across iterations) ----
+    # ---- Lag-distance matrices (fixed across all iterations) ----
     pp_v <- abs(outer(meta_tp, meta_tp, "-"))
     pr_v <- abs(outer(meta_tp, meta_tr, "-"))
     rp_v <- abs(outer(meta_tr, meta_tp, "-"))
@@ -210,16 +216,18 @@ estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
     dt_r <- copy(dt)
     setorder(dt_r, unit, time)
 
-    for (iter in seq_len(max_iter)) {
+    iter <- 0L
+    repeat {
+      iter     <- iter + 1L
       beta_old <- beta_hat
 
-      # ---- Subtract treatment effects to recover treatment-free outcomes ----
+      # (a) Subtract treatment effects to recover treatment-free outcomes
       dt_r[, Y_adj := Y]
       dt_r[g == 2L & time == 2L, Y_adj := Y - beta_hat[1L]]
       dt_r[g == 2L & time == 3L, Y_adj := Y - beta_hat[2L]]
       dt_r[g == 3L & time == 3L, Y_adj := Y - beta_hat[3L]]
 
-      # ---- Estimate autocovariances sigma_d, d = 0, ..., T_total ----
+      # (b) Estimate autocovariances sigma_d, d = 0, ..., T_total
       sigma_d <- numeric(T_total + 1L)
       for (d in 0:T_total) {
         dt_r[, Y_lag := shift(Y_adj, d, type = "lag"), by = unit]
@@ -229,12 +237,12 @@ estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
         ]
       }
 
-      # ---- Build Omega_phi via structural covariance formulas (paper Eq. 31) ----
-      # Two DiDs covary whenever they share cohort observations:
-      #   +cov_term / N_g  if focal cohorts match  (fg == fg2)
-      #   +cov_term / N_c  if control cohorts match (cg == cg2)
-      #   -cov_term / N_g  if focal of s1 = control of s2 (fg == cg2)
-      #   -cov_term / N_c  if control of s1 = focal of s2 (cg == fg2)
+      # (c) Build Omega_phi via structural covariance formulas (paper Eq. 31)
+      #   Two DiDs covary when they share cohort observations:
+      #     +cov_term / N  if focal cohorts match   (fg == fg2)
+      #     +cov_term / N  if control cohorts match  (cg == cg2)
+      #     -cov_term / N  if focal of s1 = control of s2 (fg == cg2)
+      #     -cov_term / N  if control of s1 = focal of s2 (cg == fg2)
       Omega_phi <- matrix(0, nrow = n_did, ncol = n_did)
       for (s1 in seq_len(n_did)) {
         for (s2 in seq_len(n_did)) {
@@ -248,11 +256,10 @@ estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
           Omega_phi[s1, s2] <- val
         }
       }
-      # Symmetrize and add ridge for numerical stability
-      Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
-      diag(Omega_phi) <- diag(Omega_phi) + 1e-8
+      Omega_phi <- (Omega_phi + t(Omega_phi)) / 2          # symmetrize
+      diag(Omega_phi) <- diag(Omega_phi) + 1e-8            # ridge
 
-      # ---- Update: beta = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta ----
+      # (d) Update beta = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta
       OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
       if (is.null(OQ)) break
       OD <- solve(Omega_phi, Delta)
@@ -262,7 +269,12 @@ estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
         error = function(e) beta_old
       ))
 
-      if (max(abs(beta_hat - beta_old)) < tol) break
+      # (e) Convergence: both beta and Omega_phi must stabilise
+      beta_conv  <- max(abs(beta_hat - beta_old))
+      omega_conv <- max(abs(Omega_phi - Omega_old))
+      Omega_old  <- Omega_phi
+
+      if ((beta_conv < tol && omega_conv < tol) || iter >= max_iter) break
     }
 
     mean(beta_hat)   # equal-weighted ATT
