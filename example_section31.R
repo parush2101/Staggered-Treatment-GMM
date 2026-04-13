@@ -16,7 +16,9 @@
 #   mu_g      : cohort baseline intercept (100 / 110 / 140)
 #   alpha_i   : unit fixed effect ~ N(0, 1)
 #   tau_gt    : true CATT (0 in pre-treatment periods)
-#   epsilon_it: idiosyncratic error ~ N(0, 1)
+#   epsilon_it: idiosyncratic error ~ MVN(0, Sigma_nt)
+#              Sigma_nt: full 900x900, heteroskedastic + non-zero cross-unit/time cov
+#              (factor model: F_load %*% t(F_load) + diag(D_var), guaranteed PD)
 #
 # Cohort size: 100 units each (300 total).
 # Estimation: Flexible TWFE (Wooldridge 2025).
@@ -66,10 +68,20 @@ tau_it[g_id == 2L & time_id == 2L] <- true_catt["beta_22"]
 tau_it[g_id == 2L & time_id == 3L] <- true_catt["beta_23"]
 tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
 
-# AR(1) persistence parameter: epsilon_it = rho * epsilon_{i,t-1} + u_it
-# u_it ~ N(0, sigma_u^2), initialised from stationary distribution N(0, 1/(1-rho^2))
-rho     <- 0.7
-sigma_u <- sqrt(1 - rho^2)   # innovation sd so Var[epsilon_it] = 1
+# Full NT x NT error covariance: heteroskedastic diagonal + non-zero covariance
+# across ALL (i,t) and (j,s) pairs (cross-unit AND cross-time).
+# Factor model: Sigma_nt = F_load %*% t(F_load) + diag(D_var)  [guaranteed PD]
+# Pre-computed once; fixed across all simulation draws.
+{
+  NT      <- N_total * T_total   # 900
+  k_fac   <- 5L
+  set.seed(123)                  # separate seed so Sigma is stable
+  F_load  <- matrix(rnorm(NT * k_fac, sd = 0.4), nrow = NT, ncol = k_fac)
+  D_var   <- runif(NT, min = 0.5, max = 2.0)
+  Sigma_nt <- tcrossprod(F_load) + diag(D_var)
+  L_chol   <- t(chol(Sigma_nt))   # lower-triangular Cholesky; epsilon = L_chol %*% z
+  rm(F_load, D_var)               # free memory; only L_chol needed
+}
 
 # ===========================================================================
 # 2. Data-Generating Function
@@ -78,16 +90,9 @@ sigma_u <- sqrt(1 - rho^2)   # innovation sd so Var[epsilon_it] = 1
 generate_data <- function() {
   alpha_i <- rnorm(N_total, mean = 0, sd = 1)   # unit FEs ~ N(0,1)
 
-  # AR(1) errors: independent across units, correlated over time within unit
-  epsilon <- numeric(N_total * T_total)
-  for (i in seq_len(N_total)) {
-    idx          <- (i - 1L) * T_total + seq_len(T_total)
-    eps_i        <- numeric(T_total)
-    eps_i[1L]    <- rnorm(1, 0, 1 / sqrt(1 - rho^2))   # stationary init
-    for (t in 2:T_total)
-      eps_i[t]   <- rho * eps_i[t - 1L] + rnorm(1, 0, sigma_u)
-    epsilon[idx] <- eps_i
-  }
+  # Full NT x NT covariance: draw epsilon ~ MVN(0, Sigma_nt) via Cholesky
+  # L_chol pre-computed above; ordering is (unit1,t1),(unit1,t2),...,(unitN,tT)
+  epsilon <- as.numeric(L_chol %*% rnorm(N_total * T_total))
 
   Y_it <- baseline + alpha_i[unit_id] + tau_it + epsilon
 
