@@ -151,7 +151,7 @@ estimate_gardner <- function(dt) {
   }, error = function(e) NA_real_)
 }
 
-# --- GMM with Identity Weighting (A = I) -----------------------------------
+# --- GMM with Efficient Weighting (A = Omega_phi^{-1}) ---------------------
 # Builds the 6 x 3 incidence matrix Q_H for the 3-cohort 3-period example
 # (Table 1 of the paper). The 6 DiD estimates are:
 #   D1: beta_22, never-treated control          -> Q_H[1,] = [ 1,  0,  0]
@@ -161,21 +161,21 @@ estimate_gardner <- function(dt) {
 #   D5: beta_22, not-yet-treated (g=3) control  -> Q_H[5,] = [ 1,  0,  0]
 #   D6: forbidden (g=2 already treated control) -> Q_H[6,] = [ 1, -1,  1]
 #        E[D6] = beta_33 - (beta_23 - beta_22); bias-corrected in Q_H.
-estimate_gmm_identity <- function(dt) {
+#
+# Iteration: (1) initial A=I estimate, (2) subtract treatment effects to get
+# treatment-free Y_adj, (3) estimate autocovariances sigma_d from Y_adj,
+# (4) build Omega_phi via structural covariance formulas (paper Eq. 31),
+# (5) update beta with A = Omega_phi^{-1}, repeat until convergence.
+estimate_gmm_efficient <- function(dt, max_iter = 5, tol = 1e-8) {
   tryCatch({
-    # Cohort-time means
-    cms <- dt[, .(Ybar = mean(Y)), by = .(g, time)]
-    m   <- function(g_val, t_val) cms[g == g_val & time == t_val, Ybar]
+    # ---- Fixed metadata for the 6 DiDs in this DGP ----
+    meta_fg <- c(2L, 2L, 3L, 3L, 2L, 3L)   # focal cohort
+    meta_cg <- c(0L, 0L, 0L, 0L, 3L, 2L)   # control cohort
+    meta_tp <- c(2L, 3L, 3L, 3L, 2L, 3L)   # t_post
+    meta_tr <- c(1L, 1L, 1L, 2L, 1L, 2L)   # t_pre
+    n_did   <- 6L
 
-    Delta <- c(
-      (m(2,2) - m(2,1)) - (m(0,2) - m(0,1)),   # D1: beta_22, never-treated
-      (m(2,3) - m(2,1)) - (m(0,3) - m(0,1)),   # D2: beta_23, never-treated
-      (m(3,3) - m(3,1)) - (m(0,3) - m(0,1)),   # D3: beta_33, never-treated m=2
-      (m(3,3) - m(3,2)) - (m(0,3) - m(0,2)),   # D4: beta_33, never-treated m=1
-      (m(2,2) - m(2,1)) - (m(3,2) - m(3,1)),   # D5: beta_22, not-yet-treated
-      (m(3,3) - m(3,2)) - (m(2,3) - m(2,2))    # D6: forbidden (bias-corrected)
-    )
-
+    # ---- Q_H: 6 x 3 incidence matrix ----
     Q_H <- matrix(c(
       1,  0,  0,
       0,  1,  0,
@@ -183,9 +183,88 @@ estimate_gmm_identity <- function(dt) {
       0,  0,  1,
       1,  0,  0,
       1, -1,  1
-    ), nrow = 6, byrow = TRUE)
+    ), nrow = n_did, byrow = TRUE)
 
+    # ---- Delta: 6 DiD estimates from cohort-time means ----
+    cms <- dt[, .(Ybar = mean(Y)), by = .(g, time)]
+    m   <- function(g_val, t_val) cms[g == g_val & time == t_val, Ybar]
+
+    Delta <- c(
+      (m(2,2) - m(2,1)) - (m(0,2) - m(0,1)),   # D1
+      (m(2,3) - m(2,1)) - (m(0,3) - m(0,1)),   # D2
+      (m(3,3) - m(3,1)) - (m(0,3) - m(0,1)),   # D3
+      (m(3,3) - m(3,2)) - (m(0,3) - m(0,2)),   # D4
+      (m(2,2) - m(2,1)) - (m(3,2) - m(3,1)),   # D5
+      (m(3,3) - m(3,2)) - (m(2,3) - m(2,2))    # D6
+    )
+
+    # ---- Initial estimate: A = I ----
     beta_hat <- as.numeric(solve(crossprod(Q_H), crossprod(Q_H, Delta)))
+
+    # ---- Lag-distance matrices (fixed across iterations) ----
+    pp_v <- abs(outer(meta_tp, meta_tp, "-"))
+    pr_v <- abs(outer(meta_tp, meta_tr, "-"))
+    rp_v <- abs(outer(meta_tr, meta_tp, "-"))
+    rr_v <- abs(outer(meta_tr, meta_tr, "-"))
+
+    dt_r <- copy(dt)
+    setorder(dt_r, unit, time)
+
+    for (iter in seq_len(max_iter)) {
+      beta_old <- beta_hat
+
+      # ---- Subtract treatment effects to recover treatment-free outcomes ----
+      dt_r[, Y_adj := Y]
+      dt_r[g == 2L & time == 2L, Y_adj := Y - beta_hat[1L]]
+      dt_r[g == 2L & time == 3L, Y_adj := Y - beta_hat[2L]]
+      dt_r[g == 3L & time == 3L, Y_adj := Y - beta_hat[3L]]
+
+      # ---- Estimate autocovariances sigma_d, d = 0, ..., T_total ----
+      sigma_d <- numeric(T_total + 1L)
+      for (d in 0:T_total) {
+        dt_r[, Y_lag := shift(Y_adj, d, type = "lag"), by = unit]
+        sigma_d[d + 1L] <- dt_r[
+          !is.na(Y_lag),
+          mean((Y_adj - mean(Y_adj)) * (Y_lag - mean(Y_lag)))
+        ]
+      }
+
+      # ---- Build Omega_phi via structural covariance formulas (paper Eq. 31) ----
+      # Two DiDs covary whenever they share cohort observations:
+      #   +cov_term / N_g  if focal cohorts match  (fg == fg2)
+      #   +cov_term / N_c  if control cohorts match (cg == cg2)
+      #   -cov_term / N_g  if focal of s1 = control of s2 (fg == cg2)
+      #   -cov_term / N_c  if control of s1 = focal of s2 (cg == fg2)
+      Omega_phi <- matrix(0, nrow = n_did, ncol = n_did)
+      for (s1 in seq_len(n_did)) {
+        for (s2 in seq_len(n_did)) {
+          cov_term <- (sigma_d[pp_v[s1, s2] + 1L] - sigma_d[pr_v[s1, s2] + 1L]
+                     - sigma_d[rp_v[s1, s2] + 1L] + sigma_d[rr_v[s1, s2] + 1L])
+          val <- 0
+          if (meta_fg[s1] == meta_fg[s2]) val <- val + cov_term / cohort_size
+          if (meta_cg[s1] == meta_cg[s2]) val <- val + cov_term / cohort_size
+          if (meta_fg[s1] == meta_cg[s2]) val <- val - cov_term / cohort_size
+          if (meta_cg[s1] == meta_fg[s2]) val <- val - cov_term / cohort_size
+          Omega_phi[s1, s2] <- val
+        }
+      }
+      # Symmetrize and add ridge for numerical stability
+      Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
+      diag(Omega_phi) <- diag(Omega_phi) + 1e-8
+
+      # ---- Update: beta = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta ----
+      OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
+      if (is.null(OQ)) break
+      OD <- solve(Omega_phi, Delta)
+
+      beta_hat <- as.numeric(tryCatch(
+        solve(crossprod(Q_H, OQ), crossprod(Q_H, OD)),
+        error = function(e) beta_old
+      ))
+
+      if (max(abs(beta_hat - beta_old)) < tol) break
+    }
+
     mean(beta_hat)   # equal-weighted ATT
   }, error = function(e) NA_real_)
 }
@@ -194,7 +273,7 @@ estimate_gmm_identity <- function(dt) {
 # 5. Simulation Loop (10 iterations)
 # ===========================================================================
 
-est_names  <- c("Flex_TWFE", "CS", "Gardner", "GMM_Identity")
+est_names  <- c("Flex_TWFE", "CS", "Gardner", "GMM_Efficient")
 att_matrix <- matrix(NA_real_, nrow = n_sims, ncol = length(est_names),
                      dimnames = list(NULL, est_names))
 
@@ -203,18 +282,18 @@ cat(sprintf("Running %d simulation iterations...\n", n_sims))
 for (s in seq_len(n_sims)) {
   dt_s <- generate_data()
 
-  att_matrix[s, "Flex_TWFE"]    <- estimate_flex_twfe(dt_s)
-  att_matrix[s, "CS"]           <- estimate_cs(dt_s)
-  att_matrix[s, "Gardner"]      <- estimate_gardner(dt_s)
-  att_matrix[s, "GMM_Identity"] <- estimate_gmm_identity(dt_s)
+  att_matrix[s, "Flex_TWFE"]     <- estimate_flex_twfe(dt_s)
+  att_matrix[s, "CS"]            <- estimate_cs(dt_s)
+  att_matrix[s, "Gardner"]       <- estimate_gardner(dt_s)
+  att_matrix[s, "GMM_Efficient"] <- estimate_gmm_efficient(dt_s)
 
   cat(sprintf(
-    "  Iter %2d:  Flex=%.3f  CS=%.3f  Gardner=%.3f  GMM=%.3f\n",
+    "  Iter %2d:  Flex=%.3f  CS=%.3f  Gardner=%.3f  GMM_Eff=%.3f\n",
     s,
     att_matrix[s, "Flex_TWFE"],
     att_matrix[s, "CS"],
     att_matrix[s, "Gardner"],
-    att_matrix[s, "GMM_Identity"]
+    att_matrix[s, "GMM_Efficient"]
   ))
 }
 
