@@ -13,7 +13,7 @@
 
 \onehalfspacing
 
-\title{Treatment of Error Covariance, Clustering, and Serial Correlation\\
+\title{Identification Assumptions, Error Covariance, and Inference\\
        in the Staggered Difference-in-Differences Literature:\\
        A Survey of Six Key Papers}
 \author{Arora \& Bijani (2026)\\
@@ -30,14 +30,14 @@
 \section{Introduction}
 % ============================================================
 
-A central but often understated design choice in difference-in-differences (DiD)
-estimation is how to handle the error covariance matrix $\Sigma$.
-The validity of inference and the efficiency of estimation both depend critically
-on (i) what structure is imposed on $\Sigma$ and (ii) how that structure is
-exploited or approximated in the standard-error formula.
+Two interconnected design choices determine whether staggered
+difference-in-differences estimates are valid and efficient:
+the \textit{identification assumptions} that justify a causal interpretation
+of the DiD estimand, and the \textit{error covariance structure} that governs
+the precision and validity of inference.
+This note surveys six influential papers through both lenses simultaneously.
 
-This note surveys six influential papers in the staggered DiD literature through
-the lens of error covariance treatment:
+This note surveys six influential papers in the staggered DiD literature:
 
 \begin{enumerate}
   \item \citet{callaway2021difference} --- Difference-in-differences with multiple
@@ -53,10 +53,12 @@ the lens of error covariance treatment:
         and efficient estimation.
 \end{enumerate}
 
-For each paper we address four questions:
+For each paper we address five questions:
 \begin{itemize}
-  \item What structure is placed on the error covariance (diagonal, block-diagonal,
-        fully general)?
+  \item What are the core identification assumptions (parallel trends, no
+        anticipation, overlap, treatment irreversibility)?
+  \item What structure is placed on the error covariance (diagonal,
+        block-diagonal, fully general)?
   \item What variance estimator is recommended (cluster-robust, bootstrap,
         analytical)?
   \item Is an efficient (GLS-type) estimator proposed that exploits $\Sigma$?
@@ -71,6 +73,47 @@ For each paper we address four questions:
 % ------------------------------------------------------------
 \subsection{Callaway and Sant'Anna (2021)}
 % ------------------------------------------------------------
+
+\paragraph{Identification assumptions.}
+\citet{callaway2021difference} rest identification on four conditions.
+\begin{enumerate}
+  \item \textbf{Conditional parallel trends.}
+        For each treated cohort $g$ and post-treatment period $t \geq g$,
+        the average change in untreated potential outcomes from the base
+        period to $t$ is the same for cohort $g$ and the never-treated group,
+        conditional on pre-treatment covariates $X$:
+        \[
+          \mathbb{E}[Y_t(0) - Y_{t'}(0) \mid G = g,\, X]
+          \;=\;
+          \mathbb{E}[Y_t(0) - Y_{t'}(0) \mid G = \infty,\, X].
+        \]
+        When no covariates are included this reduces to the standard
+        (unconditional) parallel trends assumption.
+        Conditioning on $X$ relaxes the assumption to hold only within
+        covariate strata.
+
+  \item \textbf{No anticipation.}
+        Treatment does not affect potential outcomes before it is received:
+        $Y_t(g) = Y_t(0)$ for all $t < g$.
+        This ensures pre-treatment outcomes are valid counterfactuals.
+
+  \item \textbf{Overlap.}
+        For each cohort $g$ and covariate value $x$, the probability of
+        belonging to cohort $g$ is bounded away from zero and one:
+        $0 < \Pr(G = g \mid X = x) < 1$.
+        This guarantees that treated and comparison units are comparable.
+
+  \item \textbf{Staggered irreversibility (absorbing treatment).}
+        Once a unit is treated it remains treated in all subsequent periods.
+        Units that are never treated ($G = \infty$) serve as the clean
+        comparison group.
+        The paper also allows not-yet-treated units as controls, in which
+        case parallel trends is required only relative to that sub-population.
+\end{enumerate}
+These assumptions are considerably weaker than those required for TWFE
+consistency: parallel trends need hold only for each $(g, t)$ pair, not
+across all cohorts simultaneously, and treatment effects may be fully
+heterogeneous across cohorts, time, and covariates.
 
 \paragraph{Error structure.}
 \citet{callaway2021difference} assume that units $i = 1, \ldots, N$ are drawn
@@ -114,6 +157,40 @@ In such cases, the authors recommend clustering at the treatment-cohort level
 \subsection{De Chaisemartin and d'Haultfoeuille (2023)}
 % ------------------------------------------------------------
 
+\paragraph{Identification assumptions.}
+As a survey, \citet{dechaisemartin2023twoway} discuss assumptions for multiple
+estimators.
+For their own DID$_M$ estimator, the core conditions are:
+\begin{enumerate}
+  \item \textbf{Parallel trends for switchers and non-switchers.}
+        Units that change treatment status between two consecutive periods
+        (``switchers'') share the same counterfactual trend in untreated
+        potential outcomes as stable units over the same interval.
+        Unlike \citet{callaway2021difference}, this is stated as a
+        \textit{binary period-by-period} condition rather than over a
+        multi-period baseline.
+
+  \item \textbf{Strict exogeneity.}
+        Treatment assignment is uncorrelated with the idiosyncratic error
+        in each period, conditional on unit and time fixed effects.
+
+  \item \textbf{No anticipation.}
+        Current outcomes are not affected by future changes in treatment status.
+
+  \item \textbf{No-sign-change (for aggregation).}
+        When aggregating DID$_M$ across groups and periods, the authors assume
+        treatment effects do not change sign across the aggregated cells
+        (i.e., all effects are non-negative or all are non-positive within
+        the aggregation window).
+        This condition is needed to interpret the aggregated DID$_M$ as an
+        ATT rather than a sign-ambiguous mixture.
+\end{enumerate}
+The survey also catalogues the assumptions of TWFE-based estimators and
+explains why they fail under treatment effect heterogeneity: TWFE implicitly
+requires that the treatment effect is constant across all cohorts and periods
+when used without cohort-time interactions, which is a much stronger assumption
+than any of the above.
+
 \paragraph{Error structure.}
 As a survey, \citet{dechaisemartin2023twoway} do not impose a single covariance
 assumption across all reviewed estimators.
@@ -151,6 +228,37 @@ correlation.
 \subsection{Gardner, Thakral, To and Luther (2024)}
 % ------------------------------------------------------------
 
+\paragraph{Identification assumptions.}
+\citet{gardner2024twostage} rest identification on three conditions.
+\begin{enumerate}
+  \item \textbf{Linear factor model for untreated potential outcomes.}
+        The untreated potential outcome satisfies
+        $Y_{it}(0) = \alpha_i + \lambda_t + \varepsilon_{it}$,
+        where $\alpha_i$ and $\lambda_t$ are unit and time fixed effects.
+        This is the standard two-way fixed effects (TWFE) parallel-trends
+        assumption in regression form.
+        It implies that in the absence of treatment, each unit's outcome
+        follows the same time trend up to a unit-specific level.
+
+  \item \textbf{No anticipation.}
+        Pre-treatment outcomes are equal to untreated potential outcomes:
+        $Y_{it} = Y_{it}(0)$ for all $t$ before unit $i$ is first treated.
+        This is required for the first-stage regression on untreated
+        observations to consistently estimate $\alpha_i$ and $\lambda_t$.
+
+  \item \textbf{Correct first-stage specification.}
+        The unit and time fixed effects in the first stage span the full
+        variation in untreated potential outcomes.
+        If additional covariates or group-specific trends enter
+        $Y_{it}(0)$, the first stage must include them; otherwise the
+        second-stage treatment-effect estimate is biased.
+\end{enumerate}
+A notable feature of this paper is that, under these assumptions,
+treatment effects may be \textit{fully heterogeneous} across units and time.
+The two-stage design ensures that such heterogeneity does not contaminate the
+first stage (which uses only untreated observations) or the second stage
+(which directly estimates the treatment effect as the residual gap).
+
 \paragraph{Error structure.}
 \citet{gardner2024twostage} assume cross-sectional independence with arbitrary
 within-unit serial correlation (block-diagonal $\Sigma$).
@@ -187,6 +295,47 @@ anticipation), first-stage uncertainty becomes non-negligible even asymptoticall
 \subsection{Sun and Abraham (2021)}
 % ------------------------------------------------------------
 
+\paragraph{Identification assumptions.}
+\citet{sun2021estimating} require the following conditions for their
+interaction-weighted (IW) estimator to identify cohort-specific
+average treatment effects on the treated (CATT).
+\begin{enumerate}
+  \item \textbf{Parallel trends by cohort.}
+        For each treated cohort $g$ and every period $t$, the average change
+        in untreated potential outcomes from the pre-treatment base period is
+        the same for cohort $g$ and the never-treated (or not-yet-treated)
+        units:
+        \[
+          \mathbb{E}[Y_{it}(0) - Y_{il}(0) \mid G_i = g]
+          \;=\;
+          \mathbb{E}[Y_{it}(0) - Y_{il}(0) \mid G_i = \infty],
+          \quad l < g \leq t.
+        \]
+        This is stated cohort-by-cohort, allowing heterogeneous parallel-trends
+        violations across cohorts to be separately testable.
+
+  \item \textbf{No anticipation.}
+        Treatment does not affect outcomes before it begins:
+        $Y_{it}(g) = Y_{it}(0)$ for all $t < g$.
+        The TWFE specification they study includes pre-treatment ``leads''
+        precisely to test this condition.
+
+  \item \textbf{Staggered irreversibility.}
+        Treatment adoption is absorbing: units do not de-select from treatment.
+        This, combined with parallel trends, identifies the CATT for each
+        cohort $g$ at each post-treatment time $t \geq g$.
+
+  \item \textbf{Existence of a clean comparison group.}
+        A never-treated or not-yet-treated comparison group must exist and
+        have positive probability mass, ensuring that the cohort-specific
+        ATTs are identified from valid DiD comparisons.
+\end{enumerate}
+The paper's key insight is that standard TWFE with event-time dummies
+\textit{fails} to recover the CATTs even when all four conditions hold,
+because the OLS coefficients on the leads and lags are contaminated by
+treatment effects from other cohorts.
+Their IW estimator explicitly cleans these contaminations.
+
 \paragraph{Error structure.}
 \citet{sun2021estimating} adopt a standard linear panel model with no special
 structure on the error covariance beyond what is needed for OLS consistency.
@@ -217,6 +366,53 @@ The paper offers no guidance on inference with few clusters.
 % ------------------------------------------------------------
 \subsection{Wooldridge (2025)}
 % ------------------------------------------------------------
+
+\paragraph{Identification assumptions.}
+\citet{wooldridge2025twoway} embed the DiD problem in the correlated random
+effects (CRE) / Mundlak framework.
+The central conditions are:
+\begin{enumerate}
+  \item \textbf{Two-way Mundlak (TWM) projection.}
+        The unit fixed effect $\alpha_i$ is modelled as a linear projection
+        onto within-unit means of all time-varying regressors
+        (including cohort-time treatment indicators):
+        \[
+          \alpha_i \;=\; \xi \;+\; \bar{X}_i'\gamma \;+\; v_i,
+          \qquad \mathbb{E}[v_i \mid \bar{X}_i] = 0.
+        \]
+        This replaces the standard fixed-effects ``demeaning'' with an
+        explicit regression, which makes the identification conditions
+        transparent and allows for random-effects efficiency gains.
+
+  \item \textbf{Strict exogeneity of treatment.}
+        Conditional on $\alpha_i$, $\lambda_t$, and $X_{it}$, the treatment
+        indicator is uncorrelated with the idiosyncratic error in all periods
+        (past, present, and future).
+        This is standard TWFE strict exogeneity.
+
+  \item \textbf{No anticipation.}
+        Cohort indicators are defined by first treatment date; future treatment
+        does not affect current outcomes conditional on the unit and time effects.
+
+  \item \textbf{Parallel trends via cohort--time interactions.}
+        The extended TWFE (ETWFE) specification includes a full set of
+        cohort $\times$ calendar-time interaction dummies for post-treatment
+        periods.
+        These interactions allow the treatment effect to be fully heterogeneous
+        across cohorts and time without violating identification, provided
+        parallel trends holds \textit{on average} within each cohort.
+
+  \item \textbf{Full-rank design matrix.}
+        The cohort--time interaction cells must each have positive mass so
+        that the ETWFE OLS is identified.
+        Thin cells (small cohort sizes) reduce precision but do not violate
+        identification.
+\end{enumerate}
+A key contribution relative to earlier work is demonstrating that the TWFE
+estimator, the Mundlak regression, and the ETWFE regression all produce
+numerically identical estimates of the aggregated ATT under the same
+parallel-trends assumption --- the three formulations are algebraically
+equivalent, not just asymptotically so.
 
 \paragraph{Error structure.}
 \citet{wooldridge2025twoway} works within the \textit{correlated random effects}
@@ -259,6 +455,53 @@ remains necessary even after FGLS.
 % ------------------------------------------------------------
 \subsection{Borusyak, Jaravel and Spiess (2024)}
 % ------------------------------------------------------------
+
+\paragraph{Identification assumptions.}
+\citet{borusyak2024revisiting} identify causal effects under three core
+conditions.
+\begin{enumerate}
+  \item \textbf{Parallel trends / exogenous treatment timing.}
+        Untreated potential outcomes follow a linear two-way factor structure:
+        \[
+          Y_{it}(0) \;=\; \alpha_i \;+\; \lambda_t \;+\; \varepsilon_{it},
+        \]
+        where $\alpha_i$ and $\lambda_t$ are unit and time fixed effects and
+        $\varepsilon_{it}$ is mean-zero conditional on treatment history.
+        This is the standard TWFE parallel-trends assumption.
+        Importantly, the authors state this as an assumption on the
+        \textit{potential outcome model}, not as a conditional mean
+        restriction on observed data, which makes the efficiency analysis
+        tractable.
+
+  \item \textbf{No anticipation.}
+        Pre-treatment observed outcomes equal untreated potential outcomes:
+        $Y_{it} = Y_{it}(0)$ for all $t$ before treatment begins.
+        This is required for the control-outcome model to be estimated
+        consistently from pre-treatment data.
+
+  \item \textbf{Staggered irreversibility.}
+        Treatment is absorbing: once unit $i$ is treated at time $g_i$,
+        it remains treated in all subsequent periods.
+        Together with no anticipation, this identifies the ATT$(g, t)$
+        for all post-treatment $(g, t)$ pairs.
+\end{enumerate}
+Beyond these three, the \textbf{efficient} (GLS) estimator requires an
+additional assumption:
+\begin{enumerate}
+  \setcounter{enumi}{3}
+  \item \textbf{Correct specification of the control outcome model.}
+        The unit and time fixed effects fully capture the variation in
+        $Y_{it}(0)$.
+        If the true model includes additional covariates or group-specific
+        trends, the imputation step will be biased unless the first stage
+        is augmented accordingly.
+\end{enumerate}
+A distinctive feature of this paper is framing identification as a
+\textit{model} for the untreated potential outcome rather than as a
+selection-on-observables restriction.
+This framing naturally leads to the imputation estimator: fit the model to
+control observations, impute $\hat{Y}_{it}(0)$ for treated observations,
+and take the average gap $Y_{it}(1) - \hat{Y}_{it}(0)$ as the ATT estimate.
 
 \paragraph{Error structure.}
 \citet{borusyak2024revisiting} provide the most explicit and general treatment of
@@ -328,7 +571,68 @@ Cross-sectional dependence (spatial, network) is not addressed.
 \section{Comparative Summary}
 % ============================================================
 
-Table~\ref{tab:summary} consolidates the four dimensions across all six papers.
+\subsection{Identification Assumptions}
+
+Table~\ref{tab:assumptions} summarises the identification conditions imposed
+by each paper.
+Several patterns emerge.
+First, all six papers require some form of \textbf{parallel trends} for
+untreated potential outcomes, but they differ in whether the condition is
+stated unconditionally (Wooldridge, Borusyak et al., Gardner et al.),
+conditionally on covariates (Callaway \& Sant'Anna), or period-by-period
+for switchers (De Chaisemartin \& d'Haultfoeuille).
+Second, \textbf{no anticipation} is universal.
+Third, \textbf{absorbing treatment} (staggered irreversibility) is assumed in
+all but De Chaisemartin \& d'Haultfoeuille (2023), whose DID$_M$ allows
+treatment switching.
+Fourth, only \citet{callaway2021difference} explicitly require an \textbf{overlap}
+condition; the others implicitly assume sufficient comparison units exist but
+do not formalise the overlap requirement.
+
+\begin{table}[ht]
+\centering
+\caption{Identification Assumptions Across Six DiD Papers}
+\label{tab:assumptions}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{@{}lXccccc@{}}
+\toprule
+\textbf{Paper}
+  & \textbf{Parallel trends form}
+  & \textbf{No antic.}
+  & \textbf{Overlap}
+  & \textbf{Absorbing}
+  & \textbf{Het.\ TE}
+  & \textbf{Strict exog.} \\
+\midrule
+Callaway \& Sant'Anna (2021)
+  & Conditional on $X$, cohort-by-cohort
+  & \checkmark & \checkmark & \checkmark & \checkmark & --- \\
+De Chaisemartin \& d'Haultfoeuille (2023)
+  & Period-by-period for switchers
+  & \checkmark & --- & --- & \checkmark & \checkmark \\
+Gardner et al.\ (2024)
+  & TWFE linear factor model
+  & \checkmark & --- & \checkmark & \checkmark & --- \\
+Sun \& Abraham (2021)
+  & Cohort-by-cohort, unconditional
+  & \checkmark & \checkmark & \checkmark & \checkmark & --- \\
+Wooldridge (2025)
+  & Via Mundlak CRE projection
+  & \checkmark & --- & \checkmark & \checkmark & \checkmark \\
+Borusyak et al.\ (2024)
+  & TWFE potential outcome model
+  & \checkmark & --- & \checkmark & \checkmark & --- \\
+\bottomrule
+\multicolumn{7}{@{}l}{\footnotesize \checkmark = explicitly assumed; --- = implicit
+or not formally stated.}\\
+\multicolumn{7}{@{}l}{\footnotesize ``Het.\ TE'' = heterogeneous treatment effects
+explicitly allowed.}\\
+\end{tabularx}
+\end{table}
+
+\subsection{Error Covariance and Inference}
+
+Table~\ref{tab:summary} consolidates the inference-related dimensions across all six papers.
 
 \begin{table}[ht]
 \centering
