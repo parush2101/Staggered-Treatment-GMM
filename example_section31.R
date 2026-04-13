@@ -171,7 +171,7 @@ estimate_gardner <- function(dt) {
 #     (d) update beta = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta
 #     (e) check convergence on BOTH beta and Omega_phi; stop when both
 #         change by less than tol across successive iterations.
-estimate_gmm_efficient <- function(dt, max_iter = 50, tol = 1e-8) {
+estimate_gmm_efficient <- function(dt, max_iter = 10, tol = 1e-8) {
   tryCatch({
     # ---- Fixed metadata for the 6 DiDs in this DGP ----
     meta_fg <- c(2L, 2L, 3L, 3L, 2L, 3L)   # focal cohort
