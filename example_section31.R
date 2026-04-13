@@ -20,6 +20,7 @@
 #
 # Cohort size: 100 units each (300 total).
 # Estimation: Flexible TWFE (Wooldridge 2025).
+# Simulation: 10 iterations; reports bias and variance of the aggregated ATT.
 ###############################################################################
 
 library(data.table)
@@ -31,6 +32,7 @@ set.seed(42)
 # 1. Parameters
 # ===========================================================================
 
+n_sims      <- 10
 cohort_size <- 100
 T_total     <- 3
 N_total     <- 3L * cohort_size   # 300
@@ -45,113 +47,101 @@ mu_g <- c("0" = 100, "2" = 110, "3" = 140)
 true_catt <- c(beta_22 = 20, beta_23 = 15, beta_33 = 25)
 true_att  <- mean(true_catt)   # equal-weighted ATT = 20
 
-# ===========================================================================
-# 2. Generate Data
-# ===========================================================================
+catt_keys  <- c("g2_t2", "g2_t3", "g3_t3")
+catt_names <- c("beta_22", "beta_23", "beta_33")
 
+# Fixed observation-level indices (invariant across simulations)
 unit_id <- rep(seq_len(N_total), each  = T_total)
 time_id <- rep(seq_len(T_total), times = N_total)
 g_id    <- g_cohort[unit_id]
-
-# Unit fixed effects: alpha_i ~ N(0, 1), one draw per unit
-alpha_i <- rnorm(N_total, mean = 0, sd = 1)
-
-# Idiosyncratic errors: epsilon_it ~ N(0, 1)
-epsilon  <- rnorm(N_total * T_total, mean = 0, sd = 1)
-
-# Cohort baseline for each observation
 baseline <- mu_g[as.character(g_id)]
 
-# Treatment indicator: 1 if unit's cohort has received treatment by time t
 D_it <- as.integer((g_id == 2L & time_id >= 2L) |
                    (g_id == 3L & time_id >= 3L))
 
-# True treatment effect tau_gt (= CATT at post-treatment periods, 0 elsewhere)
 tau_it <- numeric(N_total * T_total)
-tau_it[g_id == 2L & time_id == 2L] <- true_catt["beta_22"]   # 20
-tau_it[g_id == 2L & time_id == 3L] <- true_catt["beta_23"]   # 15
-tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]   # 25
+tau_it[g_id == 2L & time_id == 2L] <- true_catt["beta_22"]
+tau_it[g_id == 2L & time_id == 3L] <- true_catt["beta_23"]
+tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
 
-# Outcome
-Y_it <- baseline + alpha_i[unit_id] + tau_it + epsilon
+# ===========================================================================
+# 2. Data-Generating Function
+# ===========================================================================
 
-dt <- data.table(
-  unit = unit_id,
-  time = time_id,
-  g    = g_id,
-  D    = D_it,
-  tau  = tau_it,
-  Y    = Y_it
-)
+generate_data <- function() {
+  alpha_i <- rnorm(N_total, mean = 0, sd = 1)          # unit FEs ~ N(0,1)
+  epsilon  <- rnorm(N_total * T_total, mean = 0, sd = 1) # errors  ~ N(0,1)
+  Y_it     <- baseline + alpha_i[unit_id] + tau_it + epsilon
+
+  dt <- data.table(unit = unit_id, time = time_id,
+                   g = g_id, D = D_it, Y = Y_it)
+  dt[, cohort_time := fifelse(D == 1L,
+                              paste0("g", g, "_t", time),
+                              "ref")]
+  dt
+}
 
 # ===========================================================================
 # 3. Verify DGP: cohort-time means should approximate Eq. (7)
 # ===========================================================================
 
+dt_check <- generate_data()
 means_check <- dcast(
-  dt[, .(mean_Y = round(mean(Y), 3)), by = .(g, time)],
+  dt_check[, .(mean_Y = round(mean(Y), 3)), by = .(g, time)],
   g ~ time, value.var = "mean_Y"
 )
 setnames(means_check, as.character(1:T_total), paste0("t=", 1:T_total))
 
 cat("=======================================================\n")
-cat("  DGP Verification: Cohort-Time Means\n")
+cat("  DGP Verification: Cohort-Time Means (one draw)\n")
 cat("=======================================================\n")
 cat("  Expected: {100,100,100}, {110,130,125}, {140,140,165}\n\n")
 print(means_check)
 cat("\n")
 
 # ===========================================================================
-# 4. Flexible TWFE Estimation (Wooldridge 2025)
-#
-#   Y_igt = alpha_i + lambda_t
-#           + sum_{g,k>=0} theta_{g,g+k} * 1(G_i=g, t=g+k) + epsilon_it
-#
-#   Implemented via cohort-time interaction dummies on treated obs.
+# 4. Simulation Loop (10 iterations)
+#    Flexible TWFE (Wooldridge 2025):
+#      Y_igt = alpha_i + lambda_t
+#              + sum_{g,k>=0} theta_{g,g+k} * 1(G_i=g, t=g+k) + epsilon_it
 # ===========================================================================
 
-# Cohort-time cell label: non-empty only for treated (g,t) cells
-dt[, cohort_time := fifelse(D == 1L,
-                            paste0("g", g, "_t", time),
-                            "ref")]
+att_draws <- numeric(n_sims)
 
-mod_flex <- feols(Y ~ i(cohort_time, ref = "ref") | unit + time, data = dt)
+cat(sprintf("Running %d simulation iterations...\n", n_sims))
 
-# Extract and label CATT estimates
-coef_raw  <- coef(mod_flex)
-coef_keys <- gsub("cohort_time::", "", names(coef_raw))
-names(coef_raw) <- coef_keys
+for (s in seq_len(n_sims)) {
+  dt_s <- generate_data()
 
-# Map estimator output keys to CATT names
-catt_keys <- c("g2_t2", "g2_t3", "g3_t3")
-catt_names <- c("beta_22", "beta_23", "beta_33")
-est_catt  <- coef_raw[catt_keys]
+  mod  <- feols(Y ~ i(cohort_time, ref = "ref") | unit + time,
+                data = dt_s, warn = FALSE)
 
-# ===========================================================================
-# 5. Results Table
-# ===========================================================================
+  coef_raw        <- coef(mod)
+  names(coef_raw) <- gsub("cohort_time::", "", names(coef_raw))
 
-cat("=======================================================\n")
-cat("  Flexible TWFE: CATT Estimates vs True Values\n")
-cat("=======================================================\n")
-cat(sprintf("%-10s  %10s  %10s  %10s\n",
-            "CATT", "Estimate", "True", "Bias"))
-cat(paste(rep("-", 46), collapse = ""), "\n")
+  est_catt      <- coef_raw[catt_keys]
+  att_draws[s]  <- mean(est_catt)
 
-for (i in seq_along(catt_keys)) {
-  est  <- est_catt[catt_keys[i]]
-  tval <- true_catt[catt_names[i]]
-  cat(sprintf("%-10s  %10.4f  %10.4f  %10.4f\n",
-              catt_keys[i], est, tval, est - tval))
+  cat(sprintf("  Iter %2d: ATT = %.4f  (bias = %+.4f)\n",
+              s, att_draws[s], att_draws[s] - true_att))
 }
 
-cat(paste(rep("-", 46), collapse = ""), "\n")
-att_est <- mean(est_catt)
-cat(sprintf("%-10s  %10.4f  %10.4f  %10.4f\n",
-            "ATT", att_est, true_att, att_est - true_att))
-cat("\n")
+# ===========================================================================
+# 5. Bias and Variance of the Aggregated ATT
+# ===========================================================================
 
+att_bias <- mean(att_draws) - true_att
+att_var  <- var(att_draws)
+att_rmse <- sqrt(att_bias^2 + att_var)
+
+cat("\n")
 cat("=======================================================\n")
-cat("  Full Model Output\n")
+cat("  Simulation Results: Flexible TWFE ATT\n")
+cat(sprintf("  Iterations: %d | True ATT: %.4f\n", n_sims, true_att))
 cat("=======================================================\n")
-print(summary(mod_flex))
+cat(sprintf("  %-20s  %10.6f\n", "Mean ATT",      mean(att_draws)))
+cat(sprintf("  %-20s  %10.6f\n", "Bias",           att_bias))
+cat(sprintf("  %-20s  %10.6f\n", "Variance",       att_var))
+cat(sprintf("  %-20s  %10.6f\n", "Std. Dev.",      sqrt(att_var)))
+cat(sprintf("  %-20s  %10.6f\n", "RMSE",           att_rmse))
+cat("=======================================================\n")
