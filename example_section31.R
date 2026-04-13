@@ -25,6 +25,8 @@
 
 library(data.table)
 library(fixest)
+library(did)
+library(did2s)
 
 set.seed(42)
 
@@ -100,48 +102,143 @@ print(means_check)
 cat("\n")
 
 # ===========================================================================
-# 4. Simulation Loop (10 iterations)
-#    Flexible TWFE (Wooldridge 2025):
-#      Y_igt = alpha_i + lambda_t
-#              + sum_{g,k>=0} theta_{g,g+k} * 1(G_i=g, t=g+k) + epsilon_it
+# 4. Estimator Functions
 # ===========================================================================
 
-att_draws <- numeric(n_sims)
+# --- Flexible TWFE (Wooldridge 2025) ---------------------------------------
+estimate_flex_twfe <- function(dt) {
+  tryCatch({
+    mod <- feols(Y ~ i(cohort_time, ref = "ref") | unit + time,
+                 data = dt, warn = FALSE)
+    coef_raw        <- coef(mod)
+    names(coef_raw) <- gsub("cohort_time::", "", names(coef_raw))
+    mean(coef_raw[catt_keys])
+  }, error = function(e) NA_real_)
+}
+
+# --- Callaway & Sant'Anna (2021) -------------------------------------------
+# Uses never-treated (g = 0) as control; aggregates to simple ATT.
+estimate_cs <- function(dt) {
+  tryCatch({
+    out <- att_gt(yname    = "Y",
+                  tname    = "time",
+                  idname   = "unit",
+                  gname    = "g",
+                  data     = as.data.frame(dt),
+                  control_group = "nevertreated",
+                  print_details = FALSE,
+                  bstrap   = FALSE,
+                  cband    = FALSE)
+    aggte(out, type = "simple")$overall.att
+  }, error = function(e) NA_real_)
+}
+
+# --- Gardner (did2s, 2024) -------------------------------------------------
+# Two-stage DiD: first stage removes unit + time FEs from untreated obs;
+# second stage regresses on treatment indicator.
+estimate_gardner <- function(dt) {
+  tryCatch({
+    dt_g <- copy(dt)
+    dt_g[, first_treat := fifelse(g == 0L, Inf, as.numeric(g))]
+    mod <- did2s(data         = as.data.frame(dt_g),
+                 yname        = "Y",
+                 first_stage  = ~ 0 | unit + time,
+                 second_stage = ~ i(D, ref = 0),
+                 treatment    = "D",
+                 cluster_var  = "unit",
+                 verbose      = FALSE)
+    as.numeric(coef(mod)["D::1"])
+  }, error = function(e) NA_real_)
+}
+
+# --- GMM with Identity Weighting (A = I) -----------------------------------
+# Builds the 6 x 3 incidence matrix Q_H for the 3-cohort 3-period example
+# (Table 1 of the paper). The 6 DiD estimates are:
+#   D1: beta_22, never-treated control          -> Q_H[1,] = [ 1,  0,  0]
+#   D2: beta_23, never-treated control          -> Q_H[2,] = [ 0,  1,  0]
+#   D3: beta_33, never-treated control (m=2)    -> Q_H[3,] = [ 0,  0,  1]
+#   D4: beta_33, never-treated control (m=1)    -> Q_H[4,] = [ 0,  0,  1]
+#   D5: beta_22, not-yet-treated (g=3) control  -> Q_H[5,] = [ 1,  0,  0]
+#   D6: forbidden (g=2 already treated control) -> Q_H[6,] = [ 1, -1,  1]
+#        E[D6] = beta_33 - (beta_23 - beta_22); bias-corrected in Q_H.
+estimate_gmm_identity <- function(dt) {
+  tryCatch({
+    # Cohort-time means
+    cms <- dt[, .(Ybar = mean(Y)), by = .(g, time)]
+    m   <- function(g_val, t_val) cms[g == g_val & time == t_val, Ybar]
+
+    Delta <- c(
+      (m(2,2) - m(2,1)) - (m(0,2) - m(0,1)),   # D1: beta_22, never-treated
+      (m(2,3) - m(2,1)) - (m(0,3) - m(0,1)),   # D2: beta_23, never-treated
+      (m(3,3) - m(3,1)) - (m(0,3) - m(0,1)),   # D3: beta_33, never-treated m=2
+      (m(3,3) - m(3,2)) - (m(0,3) - m(0,2)),   # D4: beta_33, never-treated m=1
+      (m(2,2) - m(2,1)) - (m(3,2) - m(3,1)),   # D5: beta_22, not-yet-treated
+      (m(3,3) - m(3,2)) - (m(2,3) - m(2,2))    # D6: forbidden (bias-corrected)
+    )
+
+    Q_H <- matrix(c(
+      1,  0,  0,
+      0,  1,  0,
+      0,  0,  1,
+      0,  0,  1,
+      1,  0,  0,
+      1, -1,  1
+    ), nrow = 6, byrow = TRUE)
+
+    beta_hat <- as.numeric(solve(crossprod(Q_H), crossprod(Q_H, Delta)))
+    mean(beta_hat)   # equal-weighted ATT
+  }, error = function(e) NA_real_)
+}
+
+# ===========================================================================
+# 5. Simulation Loop (10 iterations)
+# ===========================================================================
+
+est_names  <- c("Flex_TWFE", "CS", "Gardner", "GMM_Identity")
+att_matrix <- matrix(NA_real_, nrow = n_sims, ncol = length(est_names),
+                     dimnames = list(NULL, est_names))
 
 cat(sprintf("Running %d simulation iterations...\n", n_sims))
 
 for (s in seq_len(n_sims)) {
   dt_s <- generate_data()
 
-  mod  <- feols(Y ~ i(cohort_time, ref = "ref") | unit + time,
-                data = dt_s, warn = FALSE)
+  att_matrix[s, "Flex_TWFE"]    <- estimate_flex_twfe(dt_s)
+  att_matrix[s, "CS"]           <- estimate_cs(dt_s)
+  att_matrix[s, "Gardner"]      <- estimate_gardner(dt_s)
+  att_matrix[s, "GMM_Identity"] <- estimate_gmm_identity(dt_s)
 
-  coef_raw        <- coef(mod)
-  names(coef_raw) <- gsub("cohort_time::", "", names(coef_raw))
-
-  est_catt      <- coef_raw[catt_keys]
-  att_draws[s]  <- mean(est_catt)
-
-  cat(sprintf("  Iter %2d: ATT = %.4f  (bias = %+.4f)\n",
-              s, att_draws[s], att_draws[s] - true_att))
+  cat(sprintf(
+    "  Iter %2d:  Flex=%.3f  CS=%.3f  Gardner=%.3f  GMM=%.3f\n",
+    s,
+    att_matrix[s, "Flex_TWFE"],
+    att_matrix[s, "CS"],
+    att_matrix[s, "Gardner"],
+    att_matrix[s, "GMM_Identity"]
+  ))
 }
 
 # ===========================================================================
-# 5. Bias and Variance of the Aggregated ATT
+# 6. Summary: Bias and Variance of Aggregated ATT across Estimators
 # ===========================================================================
 
-att_bias <- mean(att_draws) - true_att
-att_var  <- var(att_draws)
-att_rmse <- sqrt(att_bias^2 + att_var)
-
 cat("\n")
-cat("=======================================================\n")
-cat("  Simulation Results: Flexible TWFE ATT\n")
-cat(sprintf("  Iterations: %d | True ATT: %.4f\n", n_sims, true_att))
-cat("=======================================================\n")
-cat(sprintf("  %-20s  %10.6f\n", "Mean ATT",      mean(att_draws)))
-cat(sprintf("  %-20s  %10.6f\n", "Bias",           att_bias))
-cat(sprintf("  %-20s  %10.6f\n", "Variance",       att_var))
-cat(sprintf("  %-20s  %10.6f\n", "Std. Dev.",      sqrt(att_var)))
-cat(sprintf("  %-20s  %10.6f\n", "RMSE",           att_rmse))
-cat("=======================================================\n")
+cat("==============================================================\n")
+cat(sprintf("  Summary: ATT Bias & Variance (%d iters | True ATT = %.0f)\n",
+            n_sims, true_att))
+cat("==============================================================\n")
+cat(sprintf("  %-14s  %9s  %9s  %9s  %9s\n",
+            "Estimator", "Mean ATT", "Bias", "Variance", "RMSE"))
+cat(paste(rep("-", 62), collapse = ""), "\n")
+
+for (nm in est_names) {
+  draws <- att_matrix[, nm]
+  draws <- draws[!is.na(draws)]
+  bias  <- mean(draws) - true_att
+  vr    <- var(draws)
+  rmse  <- sqrt(bias^2 + vr)
+  cat(sprintf("  %-14s  %9.4f  %9.4f  %9.4f  %9.4f\n",
+              nm, mean(draws), bias, vr, rmse))
+}
+
+cat("==============================================================\n")
