@@ -82,35 +82,18 @@ tau_it[g_id == 3L & time_id == 3L] <- true_catt["beta_33"]
 tau_it[g_id == 1L & time_id == 2L] <- 5
 tau_it[g_id == 1L & time_id == 3L] <- -85
 
-# Two separate factor-model covariance matrices (both guaranteed PD):
-#
-#  L_chol_main : 900x900, for g=0/2/3 (300 units x 3 periods).
-#                Drawn with set.seed(123) — IDENTICAL to the 3-cohort DGP,
-#                so GMM operates on exactly the same error structure as before.
-#
-#  L_chol_g1   : 300x300, for g=1 (100 units x 3 periods).
-#                Separate draw; g=1 is excluded from GMM anyway.
-#
-# Observation ordering in the 1200-vector:
-#   obs   1– 300 : g=0   obs 301– 600 : g=1
-#   obs 601– 900 : g=2   obs 901–1200 : g=3
-# eps_main maps to g=0 (1-300), g=2 (301-600), g=3 (601-900) — same layout
-# as the original 3-cohort 900-vector.
+# Single 1200x1200 factor-model covariance (guaranteed PD) shared by ALL cohorts.
+# Using one unified Sigma ensures sigma_d estimated from g=0/2/3 correctly
+# characterises g=1 errors too — a prerequisite for the g=1 control-group
+# moments (D9-D12) to improve GMM efficiency through accurate Omega_phi entries.
 {
-  k_fac <- 5L
+  NT_all <- N_total * T_total   # 1200
+  k_fac  <- 5L
   set.seed(123)
-  F_m <- matrix(rnorm(900L * k_fac, sd = 0.4), nrow = 900L, ncol = k_fac)
-  D_m <- runif(900L, min = 0.5, max = 2.0)
-  L_chol_main <- t(chol(tcrossprod(F_m) + diag(D_m)))
-  rm(F_m, D_m)
-}
-{
-  k_fac <- 5L
-  set.seed(456)
-  F_g1 <- matrix(rnorm(300L * k_fac, sd = 0.4), nrow = 300L, ncol = k_fac)
-  D_g1 <- runif(300L, min = 0.5, max = 2.0)
-  L_chol_g1 <- t(chol(tcrossprod(F_g1) + diag(D_g1)))
-  rm(F_g1, D_g1)
+  F_all  <- matrix(rnorm(NT_all * k_fac, sd = 0.4), nrow = NT_all, ncol = k_fac)
+  D_all  <- runif(NT_all, min = 0.5, max = 2.0)
+  L_chol <- t(chol(tcrossprod(F_all) + diag(D_all)))
+  rm(F_all, D_all)
 }
 
 # ===========================================================================
@@ -120,16 +103,8 @@ tau_it[g_id == 1L & time_id == 3L] <- -85
 generate_data <- function() {
   alpha_i <- rnorm(N_total, mean = 0, sd = 1)   # unit FEs ~ N(0,1)
 
-  # Draw errors from the two pre-computed Cholesky factors and slot into
-  # the correct positions of the 1200-element epsilon vector.
-  eps_main <- as.numeric(L_chol_main %*% rnorm(900L))  # g=0, g=2, g=3
-  eps_g1   <- as.numeric(L_chol_g1   %*% rnorm(300L))  # g=1
-
-  epsilon            <- numeric(N_total * T_total)
-  epsilon[  1:300]   <- eps_main[  1:300]   # g=0
-  epsilon[301:600]   <- eps_g1              # g=1
-  epsilon[601:900]   <- eps_main[301:600]   # g=2
-  epsilon[901:1200]  <- eps_main[601:900]   # g=3
+  # All cohorts share the same 1200x1200 covariance structure; single draw.
+  epsilon <- as.numeric(L_chol %*% rnorm(N_total * T_total))
 
   Y_it <- baseline + alpha_i[unit_id] + tau_it + epsilon
 
@@ -344,42 +319,49 @@ estimate_gmm_efficient <- function(dt, max_iter = 10, tol = 1e-8) {
   }, error = function(e) NA_real_)
 }
 
-# --- GMM Extended: adds g=1 moment conditions as nuisance parameters -------
-# Appends two DiDs from the always-treated cohort (g=1) vs. never-treated (g=0):
-#   D7: (m(1,2)-m(1,1)) - (m(0,2)-m(0,1))  = delta_12  (tau_12 - tau_11)
-#   D8: (m(1,3)-m(1,1)) - (m(0,3)-m(0,1))  = delta_13  (tau_13 - tau_11)
+# --- GMM Extended: g=1 as CONTROL group + nuisance focal moments ------------
+# 12 moment conditions; theta = (beta_22, beta_23, beta_33, delta_12, delta_13).
 #
-# theta = (beta_22, beta_23, beta_33, delta_12, delta_13); Q_H is 8x5.
-# D7/D8 exactly identify the nuisance parameters (just-identified); the
-# efficiency gain for beta comes through the off-diagonal blocks of the 8x8
-# Omega_phi, which links g=1 moments to D1-D4 via the shared g=0 control.
+# D1-D6 : same as GMM_Efficient (g=0 and g=3 controls)
+# D7-D8 : g=1 as FOCAL, g=0 as control — identify delta_12 and delta_13
+# D9-D12: g=1 as CONTROL for g=2/g=3 — genuinely over-identifying rows in Q_H
+#            that mix beta and delta, creating real cross-block coupling in Omega_phi
+#   D9:  (m(2,2)-m(2,1)) - (m(1,2)-m(1,1)) = beta_22 - delta_12
+#   D10: (m(2,3)-m(2,1)) - (m(1,3)-m(1,1)) = beta_23 - delta_13
+#   D11: (m(3,3)-m(3,1)) - (m(1,3)-m(1,1)) = beta_33 - delta_13
+#   D12: (m(3,3)-m(3,2)) - (m(1,3)-m(1,2)) = beta_33 + delta_12 - delta_13
 #
-# sigma_d is still computed from g=0/2/3 only: g=1's unidentified base level
-# (tau_11) cannot be removed from Y_adj, so including g=1 would contaminate
-# the autocovariance estimates.
+# With unified error covariance (all cohorts share the same Sigma), sigma_d
+# from g=0/2/3 correctly characterises g=1 errors — Omega_phi cross-blocks
+# for D9-D12 are now accurately specified, enabling genuine efficiency gains.
+# sigma_d still excludes g=1 (g=1 Y_adj contains unidentified tau_11 at t=1).
 estimate_gmm_extended <- function(dt, max_iter = 10, tol = 1e-8) {
   tryCatch({
-    # ---- Fixed metadata for 8 DiDs ----
-    meta_fg <- c(2L, 2L, 3L, 3L, 2L, 3L, 1L, 1L)   # focal cohort
-    meta_cg <- c(0L, 0L, 0L, 0L, 3L, 2L, 0L, 0L)   # control cohort
-    meta_tp <- c(2L, 3L, 3L, 3L, 2L, 3L, 2L, 3L)   # t_post
-    meta_tr <- c(1L, 1L, 1L, 2L, 1L, 2L, 1L, 1L)   # t_pre
-    n_did   <- 8L
+    # ---- Fixed metadata for 12 DiDs ----
+    meta_fg <- c(2L, 2L, 3L, 3L, 2L, 3L, 1L, 1L, 2L, 2L, 3L, 3L)
+    meta_cg <- c(0L, 0L, 0L, 0L, 3L, 2L, 0L, 0L, 1L, 1L, 1L, 1L)
+    meta_tp <- c(2L, 3L, 3L, 3L, 2L, 3L, 2L, 3L, 2L, 3L, 3L, 3L)
+    meta_tr <- c(1L, 1L, 1L, 2L, 1L, 2L, 1L, 1L, 1L, 1L, 1L, 2L)
+    n_did   <- 12L
 
-    # ---- Q_H: 8 x 5 incidence matrix ----
+    # ---- Q_H: 12 x 5 incidence matrix ----
     # Columns: (beta_22, beta_23, beta_33, delta_12, delta_13)
     Q_H <- matrix(c(
-      1,  0,  0,  0,  0,   # D1: beta_22
-      0,  1,  0,  0,  0,   # D2: beta_23
-      0,  0,  1,  0,  0,   # D3: beta_33
-      0,  0,  1,  0,  0,   # D4: beta_33
-      1,  0,  0,  0,  0,   # D5: beta_22
-      1, -1,  1,  0,  0,   # D6: beta_22 - beta_23 + beta_33 (forbidden)
-      0,  0,  0,  1,  0,   # D7: delta_12
-      0,  0,  0,  0,  1    # D8: delta_13
+      1,  0,  0,  0,  0,   # D1:  beta_22
+      0,  1,  0,  0,  0,   # D2:  beta_23
+      0,  0,  1,  0,  0,   # D3:  beta_33
+      0,  0,  1,  0,  0,   # D4:  beta_33
+      1,  0,  0,  0,  0,   # D5:  beta_22
+      1, -1,  1,  0,  0,   # D6:  beta_22 - beta_23 + beta_33 (forbidden)
+      0,  0,  0,  1,  0,   # D7:  delta_12
+      0,  0,  0,  0,  1,   # D8:  delta_13
+      1,  0,  0, -1,  0,   # D9:  beta_22 - delta_12
+      0,  1,  0,  0, -1,   # D10: beta_23 - delta_13
+      0,  0,  1,  0, -1,   # D11: beta_33 - delta_13
+      0,  0,  1,  1, -1    # D12: beta_33 + delta_12 - delta_13
     ), nrow = n_did, byrow = TRUE)
 
-    # ---- Delta: 8 DiD estimates from cohort-time means ----
+    # ---- Delta: 12 DiD estimates from cohort-time means ----
     cms <- dt[, .(Ybar = mean(Y)), by = .(g, time)]
     m   <- function(g_val, t_val) cms[g == g_val & time == t_val, Ybar]
 
@@ -391,7 +373,11 @@ estimate_gmm_extended <- function(dt, max_iter = 10, tol = 1e-8) {
       (m(2,2) - m(2,1)) - (m(3,2) - m(3,1)),   # D5
       (m(3,3) - m(3,2)) - (m(2,3) - m(2,2)),   # D6
       (m(1,2) - m(1,1)) - (m(0,2) - m(0,1)),   # D7: delta_12
-      (m(1,3) - m(1,1)) - (m(0,3) - m(0,1))    # D8: delta_13
+      (m(1,3) - m(1,1)) - (m(0,3) - m(0,1)),   # D8: delta_13
+      (m(2,2) - m(2,1)) - (m(1,2) - m(1,1)),   # D9:  g=2 vs g=1 control
+      (m(2,3) - m(2,1)) - (m(1,3) - m(1,1)),   # D10: g=2 vs g=1 control
+      (m(3,3) - m(3,1)) - (m(1,3) - m(1,1)),   # D11: g=3 vs g=1 control
+      (m(3,3) - m(3,2)) - (m(1,3) - m(1,2))    # D12: g=3 vs g=1 control
     )
 
     # ---- Step 0: initial estimate with A = I ----
@@ -429,9 +415,10 @@ estimate_gmm_extended <- function(dt, max_iter = 10, tol = 1e-8) {
         ]
       }
 
-      # (c) Build 8x8 Omega_phi using the same structural formula (Eq. 31).
-      #     sigma_d from g=0/2/3 is used as an approximation for g=1 as well,
-      #     since we cannot clean g=1's Y_adj of its base treatment level.
+      # (c) Build 12x12 Omega_phi using the structural formula (Eq. 31).
+      #     sigma_d from g=0/2/3 is valid for g=1 too (unified covariance).
+      #     D9-D12 cross-blocks are now correctly specified, enabling real
+      #     efficiency gains through the weighting matrix.
       Omega_phi <- matrix(0, nrow = n_did, ncol = n_did)
       for (s1 in seq_len(n_did)) {
         for (s2 in seq_len(n_did)) {
