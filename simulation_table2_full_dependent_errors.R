@@ -13,19 +13,17 @@
 #   2. Callaway-Sant'Anna      6. Flex TWFE (Wooldridge 2025)
 #   3. Sun-Abraham             7. GMM (diagonal A, frequency-weighted)
 #   4. Gardner (did2s)         8. Iterative GMM (efficient A)
-#                              9. GMM efficient — 3-level cross-sectional hierarchy
-#                             10. GMM efficient — full cohort-pair heterogeneous covariance
+#                              9. GMM efficient — homogeneous cross-unit extension
 #
-# GMM_Eff_3L:  Omega_phi built from 3 pooled autocovariance sequences:
-#   sigma_w (within-unit), sigma_cs (within-cohort cross-unit),
-#   sigma_cd (cross-cohort cross-unit).  C_mat decomposes into C_mat,
-#   C_same_mat, C_diff_mat accordingly.
+# GMM_Eff_HomoX: extends GMM_Eff by also estimating sigma_cross(d), the
+#   average cross-unit autocovariance at lag d (pooled over all N(N-1) unit
+#   pairs, regardless of cohort).  The net autocovariance sigma_net(d) =
+#   sigma_d(d) - sigma_cross(d) is used in S_mat in place of sigma_d(d).
+#   C_mat is unchanged; Omega_phi = C_mat * S_net_mat.  The algebraic
+#   derivation shows that subtracting sigma_cross cancels the cross-cohort
+#   cell-mean covariance terms that sigma_d alone ignores.
 #
-# GMM_Eff_Het: Omega_phi built from a separate sigma_{g,g'}(d) estimated
-#   for every ordered cohort pair (g,g').  C_{g,g'} outer-product matrices
-#   pre-computed once; the pair sum collapses to Omega_phi = Σ C_{gg'} * S_{gg'}.
-#
-# CATTs saved for: GMM_I, Flex_TWFE, GMM_Diag, GMM_Eff, GMM_Eff_3L, GMM_Eff_Het
+# CATTs saved for: GMM_I, Flex_TWFE, GMM_Diag, GMM_Eff, GMM_Eff_HomoX
 #
 # Key optimization: panel structure (Q_H, C_mat, lag indices, diagonal weights)
 # is pre-computed once before the simulation loop.
@@ -171,56 +169,17 @@ for (s in 1:n_did) {
 N_f <- sapply(meta_focal, get_cohort_size)
 N_c <- sapply(meta_ctrl, get_cohort_size)
 
-cat("  Building C_mat and 3-level structural matrices...\n")
+cat("  Building C_mat (cohort factor matrix)...\n")
 gg   <- outer(meta_focal, meta_focal, "==")
 gc_m <- outer(meta_focal, meta_ctrl,  "==")
 cg   <- outer(meta_ctrl,  meta_focal, "==")
 cc   <- outer(meta_ctrl,  meta_ctrl,  "==")
-
-# C_mat: within-unit contribution  (current formula, weight = 1/n_g)
-C_mat      <- sweep(gg - gc_m, 1,          1/N_f,  "*") +
-              sweep(cc - cg,   1,          1/N_c,  "*")
-# C_same_mat: within-cohort cross-unit weight = (n_g-1)/n_g
-C_same_mat <- sweep(gg - gc_m, 1, (N_f - 1)/N_f,  "*") +
-              sweep(cc - cg,   1, (N_c - 1)/N_c,  "*")
-# C_diff_mat: cross-cohort cross-unit (derived: total cross-unit = -C_mat)
-C_diff_mat <- -(C_mat + C_same_mat)
+C_mat <- sweep(gg - gc_m, 1, 1/N_f, "*") + sweep(cc - cg, 1, 1/N_c, "*")
 rm(gg, gc_m, cg, cc); invisible(gc())
 
-# ---------------------------------------------------------------------------
-# Cohort-level structure for full cohort-pair heterogeneous estimator
-# ---------------------------------------------------------------------------
-all_groups     <- c(0L, as.integer(treatment_times))
-n_groups       <- length(all_groups)                        # 6
-cohort_col_idx <- lapply(all_groups, function(g) which(unit_cohort == g))
-cohort_sizes   <- lengths(cohort_col_idx)
-n_same_pairs   <- sum(cohort_sizes * (cohort_sizes - 1L))   # cross-unit within same cohort
-n_diff_pairs   <- N_total * (N_total - 1L) - n_same_pairs   # cross-unit across cohorts
-
-# sign_mat[s, g_idx] = +1 if meta_focal[s]==g, -1 if meta_ctrl[s]==g, else 0
-sign_mat <- matrix(0L, nrow = n_did, ncol = n_groups)
-for (g_idx in seq_along(all_groups)) {
-  g <- all_groups[g_idx]
-  sign_mat[meta_focal == g, g_idx] <-  1L
-  sign_mat[meta_ctrl  == g, g_idx] <- -1L
-}
-
-# C_outer_list[[idx]] = outer(sign_g, sign_gp) for idx = (g_idx-1)*n_groups + gp_idx
-cat("  Building cohort-pair outer-product matrices...\n")
-C_outer_list <- vector("list", n_groups * n_groups)
-for (g_idx in 1:n_groups) {
-  for (gp_idx in 1:n_groups) {
-    C_outer_list[[(g_idx - 1L) * n_groups + gp_idx]] <-
-      outer(sign_mat[, g_idx], sign_mat[, gp_idx])
-  }
-}
-
-# Pre-identify non-zero cohort pairs (avoids redundant zero-matrix checks per iteration)
-active_gg_pairs <- do.call(rbind, Filter(Negate(is.null), lapply(1:(n_groups^2), function(idx) {
-  g_idx  <- (idx - 1L) %/% n_groups + 1L
-  gp_idx <- (idx - 1L) %%  n_groups + 1L
-  if (any(C_outer_list[[idx]] != 0L)) c(g_idx, gp_idx, idx) else NULL
-})))
+# n_cross_pairs: total number of distinct ordered unit pairs (i,j), i≠j
+# used by GMM_Eff_HomoX to normalise sigma_cross estimation
+n_cross_pairs <- N_total * (N_total - 1L)
 
 # Pre-compute time lag index vectors (for S_mat construction)
 pp_v <- as.vector(abs(outer(meta_tp, meta_tp, "-")))
@@ -405,15 +364,18 @@ gmm_efficient <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
 }
 
 # ===========================================================================
-# 8. GMM — 3-Level Cross-Sectional Hierarchy
-#    Estimates three pooled autocovariance sequences from residuals:
-#      sigma_w(d)  : within-unit (current estimator)
-#      sigma_cs(d) : within-cohort cross-unit (pooled across cohorts)
-#      sigma_cd(d) : cross-cohort cross-unit  (pooled across cohort pairs)
-#    Omega_phi = C_mat * S_w + C_same_mat * S_cs + C_diff_mat * S_cd
+# 8. GMM — Homogeneous Cross-Unit Extension  (GMM_Eff_HomoX)
+#    Assumes Cov(eps_{i,t}, eps_{j,t+d}) = sigma_cross(d) for all i≠j.
+#    Estimates sigma_cross(d) from the residual matrix using the identity:
+#      sum_{i≠j} e_{i,t}*e_{j,t+d}
+#        = (sum_i e_{i,t})*(sum_j e_{j,t+d}) - sum_i e_{i,t}*e_{i,t+d}
+#    i.e. (all-pairs row-sum product) minus (within-unit sum already in sigma_d).
+#    Net autocovariance: sigma_net(d) = sigma_d(d) - sigma_cross(d).
+#    Omega_phi = C_mat * S_net_mat  — identical structure to GMM_Eff,
+#    only sigma_d replaced by sigma_net inside the S_mat lookup.
 # ===========================================================================
 
-gmm_eff_3level <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
+gmm_eff_homox <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
   beta_hat <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
 
   dt_r <- copy(dt)
@@ -430,49 +392,35 @@ gmm_eff_3level <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
     resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
                         nrow = T_total, ncol = N_total)
 
-    sigma_w  <- numeric(T_total)   # within-unit
-    sigma_cs <- numeric(T_total)   # within-cohort cross-unit
-    sigma_cd <- numeric(T_total)   # cross-cohort cross-unit
+    sigma_d     <- numeric(T_total)
+    sigma_cross <- numeric(T_total)
 
     for (d in 0:(T_total - 1)) {
       r1 <- 1:(T_total - d); r2 <- (1 + d):T_total
 
-      # Within-unit
-      within_sum     <- sum(resid_mat[r1, ] * resid_mat[r2, ])
-      sigma_w[d + 1] <- within_sum / (N_total * (T_total - d))
+      within_sum      <- sum(resid_mat[r1, ] * resid_mat[r2, ])
+      sigma_d[d + 1]  <- within_sum / (N_total * (T_total - d))
 
-      # Within-cohort cross-unit: pool all cohorts
-      same_cross <- 0
-      for (g_idx in seq_along(cohort_col_idx)) {
-        ci  <- cohort_col_idx[[g_idx]]
-        rs1 <- rowSums(resid_mat[r1, ci, drop = FALSE])
-        rs2 <- rowSums(resid_mat[r2, ci, drop = FALSE])
-        same_cross <- same_cross + sum(rs1 * rs2) -
-                      sum(resid_mat[r1, ci, drop = FALSE] * resid_mat[r2, ci, drop = FALSE])
-      }
-      sigma_cs[d + 1] <- same_cross / (n_same_pairs * (T_total - d))
-
-      # Cross-cohort cross-unit: remainder after removing within-unit and same-cohort
-      all_sum        <- sum(rowSums(resid_mat[r1, ]) * rowSums(resid_mat[r2, ]))
-      sigma_cd[d + 1] <- (all_sum - within_sum - same_cross) / (n_diff_pairs * (T_total - d))
+      # Cross-unit sum via row-sum trick: avoids O(N^2) explicit loop
+      rs1 <- rowSums(resid_mat[r1, ])
+      rs2 <- rowSums(resid_mat[r2, ])
+      sigma_cross[d + 1] <- (sum(rs1 * rs2) - within_sum) /
+                             (n_cross_pairs * (T_total - d))
     }
 
-    S_w  <- sigma_w [pp_v+1] - sigma_w [pr_v+1] - sigma_w [rp_v+1] + sigma_w [rr_v+1]
-    S_cs <- sigma_cs[pp_v+1] - sigma_cs[pr_v+1] - sigma_cs[rp_v+1] + sigma_cs[rr_v+1]
-    S_cd <- sigma_cd[pp_v+1] - sigma_cd[pr_v+1] - sigma_cd[rp_v+1] + sigma_cd[rr_v+1]
+    sigma_net <- sigma_d - sigma_cross   # net autocovariance
 
-    Omega_phi <- C_mat      * matrix(S_w,  nrow = n_did) +
-                 C_same_mat * matrix(S_cs, nrow = n_did) +
-                 C_diff_mat * matrix(S_cd, nrow = n_did)
+    S_vec     <- sigma_net[pp_v + 1] - sigma_net[pr_v + 1] -
+                 sigma_net[rp_v + 1] + sigma_net[rr_v + 1]
+    Omega_phi <- C_mat * matrix(S_vec, nrow = n_did)
     Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
     diag(Omega_phi) <- diag(Omega_phi) + 1e-6
 
     OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
     if (is.null(OQ)) break
     OD       <- solve(Omega_phi, Delta)
-    beta_hat <- as.numeric(tryCatch(
-      solve(crossprod(Q_H, OQ), crossprod(Q_H, OD)),
-      error = function(e) beta_old))
+    beta_hat <- as.numeric(tryCatch(solve(crossprod(Q_H, OQ), crossprod(Q_H, OD)),
+                                    error = function(e) beta_old))
     if (max(abs(beta_hat - beta_old)) < tol) break
   }
 
@@ -480,78 +428,7 @@ gmm_eff_3level <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
 }
 
 # ===========================================================================
-# 9. GMM — Full Cohort-Pair Heterogeneous Covariance
-#    Estimates sigma_{g,g'}(d) separately for every ordered cohort pair (g,g').
-#    sigma_{g,g'}(d) = (1/(n_g*n_g'*(T-d))) * sum_t (cohort-g row-sum_t) *
-#                       (cohort-g' row-sum_{t+d}), absorbing the 1/(n_g n_g') scaling.
-#    Omega_phi = Σ_{(g,g')} C_{g,g'}_mat * S_{g,g'}_mat
-#    where C_{g,g'}_mat[s,r] = sign_s(g) * sign_r(g')  (pre-computed outer products).
-# ===========================================================================
-
-gmm_eff_het_cohort <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
-  beta_hat <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
-
-  dt_r <- copy(dt)
-  setorder(dt_r, unit, time)
-
-  for (iter in 1:max_iter) {
-    beta_old <- beta_hat
-
-    dt_r[, tau_hat := 0]
-    for (ci in 1:n_catt)
-      dt_r[g == catt_list[[ci]][1] & time == catt_list[[ci]][2], tau_hat := beta_hat[ci]]
-    dt_r[, Y_adj := Y - tau_hat]
-
-    resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
-                        nrow = T_total, ncol = N_total)
-
-    # sigma_gg_arr[g_idx, gp_idx, d+1] = avg covariance between cohort g and g' at lag d
-    sigma_gg_arr <- array(0, dim = c(n_groups, n_groups, T_total))
-    for (d in 0:(T_total - 1)) {
-      r1 <- 1:(T_total - d); r2 <- (1 + d):T_total
-      rs1_list <- lapply(cohort_col_idx,
-                         function(ci) rowSums(resid_mat[r1, ci, drop = FALSE]))
-      rs2_list <- lapply(cohort_col_idx,
-                         function(ci) rowSums(resid_mat[r2, ci, drop = FALSE]))
-      for (g_idx in 1:n_groups) {
-        ng <- cohort_sizes[g_idx]
-        for (gp_idx in 1:n_groups) {
-          ngp <- cohort_sizes[gp_idx]
-          sigma_gg_arr[g_idx, gp_idx, d + 1] <-
-            sum(rs1_list[[g_idx]] * rs2_list[[gp_idx]]) / (ng * ngp * (T_total - d))
-        }
-      }
-    }
-
-    # Accumulate Omega_phi over all active cohort pairs
-    Omega_phi <- matrix(0, n_did, n_did)
-    for (row_i in seq_len(nrow(active_gg_pairs))) {
-      g_idx  <- active_gg_pairs[row_i, 1]
-      gp_idx <- active_gg_pairs[row_i, 2]
-      idx    <- active_gg_pairs[row_i, 3]
-      S_gg   <- sigma_gg_arr[g_idx, gp_idx, pp_v + 1] -
-                sigma_gg_arr[g_idx, gp_idx, pr_v + 1] -
-                sigma_gg_arr[g_idx, gp_idx, rp_v + 1] +
-                sigma_gg_arr[g_idx, gp_idx, rr_v + 1]
-      Omega_phi <- Omega_phi + C_outer_list[[idx]] * matrix(S_gg, nrow = n_did)
-    }
-    Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
-    diag(Omega_phi) <- diag(Omega_phi) + 1e-6
-
-    OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
-    if (is.null(OQ)) break
-    OD       <- solve(Omega_phi, Delta)
-    beta_hat <- as.numeric(tryCatch(
-      solve(crossprod(Q_H, OQ), crossprod(Q_H, OD)),
-      error = function(e) beta_old))
-    if (max(abs(beta_hat - beta_old)) < tol) break
-  }
-
-  list(att = mean(beta_hat), catt = beta_hat)
-}
-
-# ===========================================================================
-# 10. Package-based Estimators (scalar ATT only)
+# 9. Package-based Estimators (scalar ATT only)
 # ===========================================================================
 
 estimate_twfe <- function(dt) {
@@ -613,13 +490,13 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
               label, N_total, true_att))
 
   est_names <- c("TWFE", "CS", "SA", "Gardner", "GMM_I",
-                 "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_3L", "GMM_Eff_Het")
+                 "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_HomoX")
   n_est <- length(est_names)
   results <- data.table(sim = integer())
   for (nm in est_names) results[, (nm) := numeric()]
 
-  # CATT storage matrices (n_sims × n_catt) for 6 estimators
-  catt_est  <- c("GMM_I", "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_3L", "GMM_Eff_Het")
+  # CATT storage matrices (n_sims × n_catt) for 5 estimators
+  catt_est  <- c("GMM_I", "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_HomoX")
   catt_mats <- setNames(
     lapply(catt_est, function(x) matrix(NA_real_, nrow = n_sims, ncol = n_catt)),
     catt_est
@@ -637,25 +514,22 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
     att_sa      <- estimate_sa(dt)
     att_gardner <- estimate_gardner(dt)
 
-    gmm_i_res   <- tryCatch(gmm_identity(Delta),
-                             error = function(e) list(att = NA_real_, catt = na_catt))
-    gmm_d_res   <- tryCatch(gmm_diagonal(Delta),
-                             error = function(e) list(att = NA_real_, catt = na_catt))
-    gmm_e_res   <- tryCatch(gmm_efficient(Delta, dt),
-                             error = function(e) list(att = NA_real_, catt = na_catt))
-    gmm_3l_res  <- tryCatch(gmm_eff_3level(Delta, dt),
-                             error = function(e) list(att = NA_real_, catt = na_catt))
-    gmm_het_res <- tryCatch(gmm_eff_het_cohort(Delta, dt),
-                             error = function(e) list(att = NA_real_, catt = na_catt))
-    flex_res    <- estimate_flex_twfe(dt)
+    gmm_i_res  <- tryCatch(gmm_identity(Delta),
+                            error = function(e) list(att = NA_real_, catt = na_catt))
+    gmm_d_res  <- tryCatch(gmm_diagonal(Delta),
+                            error = function(e) list(att = NA_real_, catt = na_catt))
+    gmm_e_res  <- tryCatch(gmm_efficient(Delta, dt),
+                            error = function(e) list(att = NA_real_, catt = na_catt))
+    gmm_hx_res <- tryCatch(gmm_eff_homox(Delta, dt),
+                            error = function(e) list(att = NA_real_, catt = na_catt))
+    flex_res   <- estimate_flex_twfe(dt)
 
     # Store CATTs
-    catt_mats[["GMM_I"]][s, ]        <- gmm_i_res$catt
-    catt_mats[["GMM_Diag"]][s, ]     <- gmm_d_res$catt
-    catt_mats[["GMM_Eff"]][s, ]      <- gmm_e_res$catt
-    catt_mats[["GMM_Eff_3L"]][s, ]   <- gmm_3l_res$catt
-    catt_mats[["GMM_Eff_Het"]][s, ]  <- gmm_het_res$catt
-    catt_mats[["Flex_TWFE"]][s, ]    <- flex_res$catt
+    catt_mats[["GMM_I"]][s, ]          <- gmm_i_res$catt
+    catt_mats[["GMM_Diag"]][s, ]       <- gmm_d_res$catt
+    catt_mats[["GMM_Eff"]][s, ]        <- gmm_e_res$catt
+    catt_mats[["GMM_Eff_HomoX"]][s, ]  <- gmm_hx_res$catt
+    catt_mats[["Flex_TWFE"]][s, ]      <- flex_res$catt
 
     elapsed <- round(proc.time()[3] - t0_sim, 1)
     cat(sprintf("  Sim %d/%d  (%.1fs)\n", s, n_sims, elapsed))
@@ -665,8 +539,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
       sim = s, TWFE = att_twfe, CS = att_cs, SA = att_sa,
       Gardner = att_gardner, GMM_I = gmm_i_res$att,
       Flex_TWFE = flex_res$att, GMM_Diag = gmm_d_res$att,
-      GMM_Eff = gmm_e_res$att, GMM_Eff_3L = gmm_3l_res$att,
-      GMM_Eff_Het = gmm_het_res$att
+      GMM_Eff = gmm_e_res$att, GMM_Eff_HomoX = gmm_hx_res$att
     )))
   }
 
@@ -711,7 +584,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
 # ===========================================================================
 
 cat("================================================================\n")
-cat(sprintf("  N=%d (%d/cohort), T=%d, %d sims, 10 estimators, full NT×NT Sigma\n",
+cat(sprintf("  N=%d (%d/cohort), T=%d, %d sims, 9 estimators, full NT×NT Sigma\n",
             N_total, cohort_size, T_total, n_sims))
 cat("================================================================\n")
 
@@ -732,7 +605,7 @@ cat("\n\n")
 cat("==========================================================================\n")
 cat(sprintf("  TABLE 2: Bias and Variance — Full NT×NT Sigma, N=%d (%d/cohort)\n",
             N_total, cohort_size))
-cat("  GMM_I: A=I | GMM_Diag: freq-wtd | GMM_Eff: Omega^{-1} | GMM_Eff_3L: 3-level | GMM_Eff_Het: cohort-pair het\n")
+cat("  GMM_I: A=I | GMM_Diag: freq-wtd | GMM_Eff: Omega^{-1} | GMM_Eff_HomoX: homogeneous cross-unit\n")
 cat("==========================================================================\n\n")
 
 table2 <- merge(
@@ -741,7 +614,7 @@ table2 <- merge(
   by = "Estimator"
 )
 est_order <- c("TWFE", "CS", "SA", "Gardner", "GMM_I",
-               "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_3L", "GMM_Eff_Het")
+               "Flex_TWFE", "GMM_Diag", "GMM_Eff", "GMM_Eff_HomoX")
 table2 <- table2[match(est_order, table2$Estimator)]
 
 cat(sprintf("%-16s  %12s  %12s  %12s  %12s\n",
