@@ -402,8 +402,9 @@ gmm_eff_homox <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
       sigma_d[d + 1]  <- within_sum / (N_total * (T_total - d))
 
       # Cross-unit sum via row-sum trick: avoids O(N^2) explicit loop
-      rs1 <- rowSums(resid_mat[r1, ])
-      rs2 <- rowSums(resid_mat[r2, ])
+      # drop=FALSE preserves matrix shape when r1/r2 have length 1 (d = T-1)
+      rs1 <- rowSums(resid_mat[r1, , drop = FALSE])
+      rs2 <- rowSums(resid_mat[r2, , drop = FALSE])
       sigma_cross[d + 1] <- (sum(rs1 * rs2) - within_sum) /
                              (n_cross_pairs * (T_total - d))
     }
