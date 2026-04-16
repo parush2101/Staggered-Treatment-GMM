@@ -18,20 +18,18 @@
 #   4. Gardner (did2s)         8. Iterative GMM (efficient A)
 #                              9. GMM efficient — homogeneous cross-unit extension
 #
-# GMM_Eff_HomoX: extends GMM_Eff by also estimating sigma_cross(d), the
-#   average cross-unit autocovariance at lag d (pooled over all N(N-1) unit
-#   pairs, regardless of cohort).  The net autocovariance sigma_net(d) =
-#   sigma_d(d) - sigma_cross(d) is used in S_mat in place of sigma_d(d).
-#   C_mat is unchanged; Omega_phi = C_mat * S_net_mat.
+# GMM_Eff_HomoX: extends GMM_Eff by incorporating COHORT-PAIR cross-unit
+#   autocovariance sigma_cross_pair[A,B,d] into the weighting matrix.
+#   Unlike pooled sigma_cross (which two-way FE forces to -sigma_d/(N-1)),
+#   cohort-pair sigma_cross IS identifiable: individual cohort row-sums are
+#   not constrained to zero by the time FE (only the total row-sum is).
 #
-#   NOTE ON IDENTIFICATION: Two-way FE residuals satisfy sum_i e_{i,t} = 0
-#   for every t (time FE constraint). Consequently, the cross-unit row-sum
-#   trick yields sigma_cross_est = -sigma_d/(N-1) deterministically, so
-#   sigma_net = sigma_d * N/(N-1). The N/(N-1) scaling cancels in the GMM
-#   formula (Q'Omega^{-1}Q)^{-1}Q'Omega^{-1}Delta, making GMM_Eff_HomoX
-#   numerically identical to GMM_Eff. sigma_cross is not separately
-#   identifiable from two-way FE residuals; the time FE absorbs all
-#   identifiable cross-unit variation.
+#   Full Omega_phi[s1,s2] = C_mat[s1,s2]*S_mat(sigma_d)    [within-unit]
+#                         + CROSS_mat[s1,s2](sigma_cross_pair)  [cross-unit]
+#   where CROSS_mat accounts for all N*(N-1) cross-unit pairs, partitioned
+#   by cohort: for each of the 4 group combinations (f1,f2),(f1,c2),(c1,f2),
+#   (c1,c2) in a DiD pair (s1,s2), the cohort-specific sigma_cross_pair[A,B,d]
+#   is used in place of the pooled (unidentified) sigma_cross.
 #
 # CATTs saved for: GMM_I, Flex_TWFE, GMM_Diag, GMM_Eff, GMM_Eff_HomoX
 #
@@ -239,6 +237,53 @@ cat(sprintf("  Diagonal weights: min=%.6f, max=%.6f, ratio=%.1f\n",
 
 cat("  Pre-computation done.\n\n")
 
+# ---------------------------------------------------------------------------
+# Pre-computation for GMM_Eff_HomoX: cohort-pair cross-unit sigma structure
+#
+# sigma_cross_pair[A,B,d]: average cross-unit autocovariance at lag d between
+# units in cohort A and cohort B (i≠j).  Unlike pooled sigma_cross, this is
+# identifiable from two-way FE residuals because individual cohort row-sums
+# are NOT constrained to zero (only the total row-sum is).
+#
+# For each DiD pair (s1,s2), CROSS_mat[s1,s2] captures covariance from all
+# cross-unit pairs across the four group combinations (f1,f2), (f1,c2),
+# (c1,f2), (c1,c2) with their respective time-difference structure.
+# All group sizes = 10, so weights simplify to: 0.9 if A==B, 1.0 if A!=B.
+# ---------------------------------------------------------------------------
+cat("  Pre-computing HomoX cohort-pair cross-unit structure...\n")
+all_groups_hx <- c(0L, as.integer(treatment_times))   # 6 groups: never + 5 cohorts
+n_groups_hx   <- length(all_groups_hx)                # 6
+group_cols_hx <- lapply(all_groups_hx, function(g) which(unit_cohort == g))
+
+# Group index (1..n_groups_hx) for each DiD moment's focal and ctrl groups
+focal_grp_hx <- match(meta_focal, all_groups_hx)      # length n_did
+ctrl_grp_hx  <- match(meta_ctrl,  all_groups_hx)      # length n_did
+
+# For the n_did^2 CROSS_mat: vectorized group-pair row indices into
+# sigma_cross_flat (n_groups_hx^2 x T_total matrix, row-major pair index:
+#   row = (A-1)*n_groups_hx + B  for groups A,B in 1..n_groups_hx)
+fg_s_hx <- rep(focal_grp_hx, times = n_did)   # focal group index of row moment s1
+fg_r_hx <- rep(focal_grp_hx, each  = n_did)   # focal group index of col moment s2
+cg_s_hx <- rep(ctrl_grp_hx,  times = n_did)   # ctrl  group index of row moment s1
+cg_r_hx <- rep(ctrl_grp_hx,  each  = n_did)   # ctrl  group index of col moment s2
+
+gp_ff_hx <- (fg_s_hx - 1L) * n_groups_hx + fg_r_hx  # pair index for (f_row, f_col)
+gp_fc_hx <- (fg_s_hx - 1L) * n_groups_hx + cg_r_hx  # pair index for (f_row, c_col)
+gp_cf_hx <- (cg_s_hx - 1L) * n_groups_hx + fg_r_hx  # pair index for (c_row, f_col)
+gp_cc_hx <- (cg_s_hx - 1L) * n_groups_hx + cg_r_hx  # pair index for (c_row, c_col)
+
+# Cross-unit weights: (N_A-1)/N_A = 0.9 when same group, 1.0 when different
+# (all groups have size 10: N_A*(N_A-1)/N_A^2 = 9/10)
+w_ff_hx <- ifelse(fg_s_hx == fg_r_hx, 0.9, 1.0)
+w_fc_hx <- ifelse(fg_s_hx == cg_r_hx, 0.9, 1.0)
+w_cf_hx <- ifelse(cg_s_hx == fg_r_hx, 0.9, 1.0)
+w_cc_hx <- ifelse(cg_s_hx == cg_r_hx, 0.9, 1.0)
+rm(fg_s_hx, fg_r_hx, cg_s_hx, cg_r_hx)  # free temporary vectors
+
+cat(sprintf("  HomoX: %d groups, %d DiD moments, %.1fM gp indices\n",
+            n_groups_hx, n_did, n_did^2 / 1e6))
+cat("  (HomoX pre-computation done.)\n\n")
+
 # ===========================================================================
 # 3. DGP + True ATT / True CATTs
 # ===========================================================================
@@ -390,15 +435,33 @@ gmm_efficient <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
 }
 
 # ===========================================================================
-# 8. GMM — Homogeneous Cross-Unit Extension  (GMM_Eff_HomoX)
-#    Assumes Cov(eps_{i,t}, eps_{j,t+d}) = sigma_cross(d) for all i≠j.
-#    Estimates sigma_cross(d) from the residual matrix using the identity:
-#      sum_{i≠j} e_{i,t}*e_{j,t+d}
-#        = (sum_i e_{i,t})*(sum_j e_{j,t+d}) - sum_i e_{i,t}*e_{i,t+d}
-#    i.e. (all-pairs row-sum product) minus (within-unit sum already in sigma_d).
-#    Net autocovariance: sigma_net(d) = sigma_d(d) - sigma_cross(d).
-#    Omega_phi = C_mat * S_net_mat  — identical structure to GMM_Eff,
-#    only sigma_d replaced by sigma_net inside the S_mat lookup.
+# 8. GMM — Cohort-Pair Cross-Unit Extension  (GMM_Eff_HomoX)
+#
+#    Extends GMM_Eff by incorporating cohort-pair-specific cross-unit
+#    autocovariance.  For each ordered pair of cohorts (A, B), define:
+#      sigma_cross_pair[A,B,d] = (1/(N_A*N_B*(T-d))) * sum_{i in A, j in B, t}
+#                                  e_{i,t} * e_{j,t+d}    (for A != B)
+#    (for A==B the N_A*(N_A-1) within-same-cohort cross pairs are used).
+#
+#    Estimated via group row-sums: sigma_cross_pair[A,B,d] =
+#      sum_t RS_A(t) * RS_B(t+d) / (N_A * N_B * (T-d))   for A != B
+#    where RS_A(t) = sum_{i in A} e_{i,t}.
+#
+#    Unlike pooled sigma_cross (which two-way FE forces to -sigma_d/(N-1)),
+#    individual cohort row-sums are NOT constrained to zero, so
+#    sigma_cross_pair[A,B,d] varies freely across cohort pairs.
+#
+#    Full Omega_phi[s1,s2] =
+#      [within-unit: C_mat * S_mat(sigma_d)]               (same as GMM_Eff)
+#    + [cross-unit: CROSS_mat(sigma_cross_pair)]            (new in HomoX)
+#
+#    CROSS_mat[s1,s2] = w_ff * S_cross[f1,f2]
+#                     - w_fc * S_cross[f1,c2]
+#                     - w_cf * S_cross[c1,f2]
+#                     + w_cc * S_cross[c1,c2]
+#    where S_cross[A,B] = sigma_cross_pair[A,B,|pp|] - sigma_cross_pair[A,B,|pr|]
+#                       - sigma_cross_pair[A,B,|rp|] + sigma_cross_pair[A,B,|rr|]
+#    and w_AB = (N_A-1)/N_A = 0.9 (A==B), 1.0 (A!=B)  [all groups size 10].
 # ===========================================================================
 
 gmm_eff_homox <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
@@ -418,35 +481,98 @@ gmm_eff_homox <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
     resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
                         nrow = T_total, ncol = N_total)
 
-    sigma_d     <- numeric(T_total)
-    sigma_cross <- numeric(T_total)
+    # --- Within-unit autocovariance (pooled, same as GMM_Eff) ---
+    sigma_d <- numeric(T_total)
+
+    # --- Cohort-pair cross-unit autocovariance ---
+    # sigma_cross_flat: (n_groups_hx^2) x T_total, row-major pair index
+    #   row = (A-1)*n_groups_hx + B   for groups A,B in 1..n_groups_hx
+    sigma_cross_flat <- matrix(0.0, nrow = n_groups_hx * n_groups_hx, ncol = T_total)
 
     for (d in 0:(T_total - 1)) {
       r1 <- 1:(T_total - d); r2 <- (1 + d):T_total
+      nt <- T_total - d
 
-      within_sum     <- sum(resid_mat[r1, ] * resid_mat[r2, ])
-      sigma_d[d + 1] <- within_sum / (N_total * (T_total - d))
+      sigma_d[d + 1] <- sum(resid_mat[r1, ] * resid_mat[r2, ]) / (N_total * nt)
 
-      rs1 <- rowSums(resid_mat[r1, , drop = FALSE])
-      rs2 <- rowSums(resid_mat[r2, , drop = FALSE])
-      sigma_cross[d + 1] <- (sum(rs1 * rs2) - within_sum) /
-                             (n_cross_pairs * (T_total - d))
+      # Group row-sums and within-group within-unit cross-products
+      RS1 <- matrix(0.0, n_groups_hx, nt)  # RS1[g, t] = sum_{i in g} e_{i, r1[t]}
+      RS2 <- matrix(0.0, n_groups_hx, nt)  # RS2[g, t] = sum_{i in g} e_{i, r2[t]}
+      wg  <- numeric(n_groups_hx)           # wg[g] = sum_{i in g, t} e_{i,r1[t]}*e_{i,r2[t]}
+      for (g in 1:n_groups_hx) {
+        gc <- group_cols_hx[[g]]
+        s1 <- resid_mat[r1, gc, drop = FALSE]   # nt x N_g
+        s2 <- resid_mat[r2, gc, drop = FALSE]   # nt x N_g
+        RS1[g, ] <- rowSums(s1)
+        RS2[g, ] <- rowSums(s2)
+        wg[g]    <- sum(s1 * s2)               # within-unit part for group g
+      }
+
+      # cp_mat[A,B] = sum_t RS1[A,t] * RS2[B,t]  (n_groups x n_groups)
+      cp_mat   <- tcrossprod(RS1, RS2)
+
+      # Normalise to per-pair per-period averages:
+      #   A != B: N_A * N_B cross pairs, each of size 1  → divide by 100*nt
+      #   A == B: N_A*(N_A-1) within-same-group cross pairs → divide by 90*nt
+      pair_mat          <- cp_mat / (100 * nt)
+      for (g in 1:n_groups_hx)
+        pair_mat[g, g]  <- (cp_mat[g, g] - wg[g]) / (90 * nt)
+
+      # Store row-major: pair_mat[A,B] → row (A-1)*n_groups_hx + B
+      sigma_cross_flat[, d + 1] <- as.vector(t(pair_mat))
     }
 
-    # sigma_net = sigma_d * N/(N-1) (exactly, due to time FE row-sum = 0)
-    sigma_net <- sigma_d - sigma_cross
+    # Center sigma_cross_flat: subtract the weighted pooled mean at each lag.
+    # The uniform (pooled) component is unidentifiable from TWFE residuals
+    # (two-way FE forces pooled sigma_cross = -sigma_d/(N-1) deterministically),
+    # and makes the CROSS_mat diagonal systematically negative (non-PD).
+    # The centered values capture only the identifiable cohort-pair variation.
+    # Weights: N_A*N_B = 100 for A≠B, N_A*(N_A-1) = 90 for A==B.
+    pair_wt_vec <- rep(100.0, n_groups_hx^2)
+    for (g in 1:n_groups_hx) pair_wt_vec[(g - 1L) * n_groups_hx + g] <- 90.0
+    sigma_cross_pooled <- colSums(sigma_cross_flat * pair_wt_vec) / sum(pair_wt_vec)
+    sigma_cross_flat   <- sigma_cross_flat -
+                          matrix(sigma_cross_pooled, nrow = n_groups_hx^2,
+                                 ncol = T_total, byrow = TRUE)
 
-    S_vec     <- sigma_net[pp_v + 1] - sigma_net[pr_v + 1] -
-                 sigma_net[rp_v + 1] + sigma_net[rr_v + 1]
-    Omega_phi <- C_mat * matrix(S_vec, nrow = n_did)
+    # Clamp centered cross-unit values by ±0.5*sigma_d (Cauchy-Schwarz bound).
+    # Prevents CROSS_mat from dominating Omega_phi in finite samples where
+    # sigma_cross_pair is estimated noisily (10 units per cohort).
+    sigma_cross_flat <- pmax(pmin(sigma_cross_flat,
+                                  matrix(0.5 * sigma_d, nrow = n_groups_hx^2,
+                                         ncol = T_total, byrow = TRUE)),
+                             matrix(-0.5 * sigma_d, nrow = n_groups_hx^2,
+                                    ncol = T_total, byrow = TRUE))
+
+    # --- Within-unit S_vec (same as GMM_Eff) ---
+    S_d_vec <- sigma_d[pp_v + 1] - sigma_d[pr_v + 1] - sigma_d[rp_v + 1] + sigma_d[rr_v + 1]
+
+    # --- Cross-unit S_cross: vectorized lookup using pre-computed pair indices ---
+    # Each lookup extracts n_did^2 values from sigma_cross_flat[36 x 33]
+    SCFF <- sigma_cross_flat[cbind(gp_ff_hx, pp_v+1)] - sigma_cross_flat[cbind(gp_ff_hx, pr_v+1)] -
+            sigma_cross_flat[cbind(gp_ff_hx, rp_v+1)] + sigma_cross_flat[cbind(gp_ff_hx, rr_v+1)]
+    SCFC <- sigma_cross_flat[cbind(gp_fc_hx, pp_v+1)] - sigma_cross_flat[cbind(gp_fc_hx, pr_v+1)] -
+            sigma_cross_flat[cbind(gp_fc_hx, rp_v+1)] + sigma_cross_flat[cbind(gp_fc_hx, rr_v+1)]
+    SCCF <- sigma_cross_flat[cbind(gp_cf_hx, pp_v+1)] - sigma_cross_flat[cbind(gp_cf_hx, pr_v+1)] -
+            sigma_cross_flat[cbind(gp_cf_hx, rp_v+1)] + sigma_cross_flat[cbind(gp_cf_hx, rr_v+1)]
+    SCCC <- sigma_cross_flat[cbind(gp_cc_hx, pp_v+1)] - sigma_cross_flat[cbind(gp_cc_hx, pr_v+1)] -
+            sigma_cross_flat[cbind(gp_cc_hx, rp_v+1)] + sigma_cross_flat[cbind(gp_cc_hx, rr_v+1)]
+
+    # Combine four group-pair contributions into CROSS_mat (vectorized)
+    CROSS_vec <- w_ff_hx * SCFF - w_fc_hx * SCFC - w_cf_hx * SCCF + w_cc_hx * SCCC
+
+    # Full Omega_phi = within-unit + cross-unit contributions
+    Omega_phi <- C_mat * matrix(S_d_vec, nrow = n_did) + matrix(CROSS_vec, nrow = n_did)
     Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
     diag(Omega_phi) <- diag(Omega_phi) + 1e-6
 
     OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
     if (is.null(OQ)) break
-    OD       <- solve(Omega_phi, Delta)
-    beta_hat <- as.numeric(tryCatch(solve(crossprod(Q_H, OQ), crossprod(Q_H, OD)),
-                                    error = function(e) beta_old))
+    OD           <- solve(Omega_phi, Delta)
+    beta_hat_new <- tryCatch(as.numeric(solve(crossprod(Q_H, OQ), crossprod(Q_H, OD))),
+                             error = function(e) NULL)
+    if (is.null(beta_hat_new) || !all(is.finite(beta_hat_new))) break
+    beta_hat <- beta_hat_new
     if (max(abs(beta_hat - beta_old)) < tol) break
   }
 
