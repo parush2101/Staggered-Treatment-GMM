@@ -2,11 +2,14 @@
 # Table 2 Replication with Full (NT×NT) Dependent Errors — Large N
 #
 # DGP: Y_it = alpha_i + lambda_t + tau_it + epsilon_it
-#   where epsilon ~ MVN(0, Sigma_full), Sigma_full is NT×NT via a factor model:
-#   Sigma_full = F F' + diag(D), F is NT×k_fac with N(0, 0.16) entries.
-#   This induces both serial dependence within units and cross-sectional
-#   dependence across units (unlike the AR(1) version which assumes
-#   epsilon_i independent across i).
+#   where epsilon_{i,t} = Phi[i,] %*% F_time[t,] + sqrt(D_unit[i]) * N(0,1)
+#   Phi    : N x k_fac unit-specific factor loadings (fixed, drawn once)
+#   F_time : T x k_fac common AR(1) factors (rho=0.5), drawn each simulation
+#   D_unit : N unit-specific idiosyncratic variances (fixed)
+#   This induces both serial dependence within units (via AR(1) factors) and
+#   identifiable cross-unit dependence: Cov(e_{i,t}, e_{j,t+d}) = (Phi[i,].Phi[j,]) * 0.5^|d|
+#   Unlike the iid-row factor model, the residual cross-unit covariance after
+#   two-way FE is non-trivially structured (not fully absorbed by time FE).
 #
 # Estimators:
 #   1. TWFE                    5. GMM (A = I)
@@ -19,9 +22,16 @@
 #   average cross-unit autocovariance at lag d (pooled over all N(N-1) unit
 #   pairs, regardless of cohort).  The net autocovariance sigma_net(d) =
 #   sigma_d(d) - sigma_cross(d) is used in S_mat in place of sigma_d(d).
-#   C_mat is unchanged; Omega_phi = C_mat * S_net_mat.  The algebraic
-#   derivation shows that subtracting sigma_cross cancels the cross-cohort
-#   cell-mean covariance terms that sigma_d alone ignores.
+#   C_mat is unchanged; Omega_phi = C_mat * S_net_mat.
+#
+#   NOTE ON IDENTIFICATION: Two-way FE residuals satisfy sum_i e_{i,t} = 0
+#   for every t (time FE constraint). Consequently, the cross-unit row-sum
+#   trick yields sigma_cross_est = -sigma_d/(N-1) deterministically, so
+#   sigma_net = sigma_d * N/(N-1). The N/(N-1) scaling cancels in the GMM
+#   formula (Q'Omega^{-1}Q)^{-1}Q'Omega^{-1}Delta, making GMM_Eff_HomoX
+#   numerically identical to GMM_Eff. sigma_cross is not separately
+#   identifiable from two-way FE residuals; the time FE absorbs all
+#   identifiable cross-unit variation.
 #
 # CATTs saved for: GMM_I, Flex_TWFE, GMM_Diag, GMM_Eff, GMM_Eff_HomoX
 #
@@ -52,21 +62,28 @@ n_cohorts       <- length(treatment_times)
 unit_cohort     <- c(rep(treatment_times, each = cohort_size), rep(0, n_never))
 
 # ---------------------------------------------------------------------------
-# Full NT×NT error covariance via factor model (pre-computed once)
-#   Sigma_full = F_all %*% t(F_all) + diag(D_all)
-#   F_all is (NT x k_fac), D_all is a diagonal heteroskedastic component.
-#   The Cholesky factor L_chol is stored; each simulation draws
-#   eps = L_chol %*% z,  z ~ N(0, I_{NT}).
-#   Ordering: obs are stacked unit-major, i.e.
-#     (unit=1,t=1), ..., (unit=1,t=T), (unit=2,t=1), ...
+# DGP error structure: unit-specific factor loadings on AR(1) common factors
+#
+#   e_{i,t} = Phi[i,] %*% F_time[t,]  +  sqrt(D_unit[i]) * N(0,1)
+#
+#   Phi      : N x k_fac  — unit-specific loadings, fixed across simulations.
+#              Drawn once; creates identifiable cross-unit covariance:
+#              Cov(e_{i,t}, e_{j,t+d}) = (Phi[i,] . Phi[j,]) * rho_fac^|d|
+#   F_time   : T x k_fac  — common AR(1) factors, drawn fresh each simulation.
+#              Each column: f_{k,t} = rho_fac * f_{k,t-1} + N(0,1).
+#   D_unit   : N         — unit-specific idiosyncratic variance (fixed).
+#
+#   Because Phi varies by unit (not absorbed by time FE), the cross-unit
+#   covariance of two-way FE residuals is non-trivially structured:
+#     Cov(e_hat_{i,t}, e_hat_{j,t+d}) = (Phi[i,]-Phi_bar) . (Phi[j,]-Phi_bar) * rho_fac^|d|
+#   Ordering: obs stacked unit-major, (unit=1,t=1..T), (unit=2,t=1..T), ...
 # ---------------------------------------------------------------------------
-NT_all <- N_total * T_total   # 1980
-k_fac  <- 5L
+NT_all  <- N_total * T_total   # 1980
+k_fac   <- 5L
+rho_fac <- 0.5                 # AR(1) persistence of common factors
 set.seed(123)
-F_all  <- matrix(rnorm(NT_all * k_fac, sd = 0.4), nrow = NT_all, ncol = k_fac)
-D_all  <- runif(NT_all, min = 0.5, max = 2.0)
-L_chol <- t(chol(tcrossprod(F_all) + diag(D_all)))
-rm(F_all, D_all)
+Phi    <- matrix(rnorm(N_total * k_fac, sd = 0.4), nrow = N_total, ncol = k_fac)
+D_unit <- runif(N_total, min = 0.5, max = 2.0)
 
 get_cohort_size <- function(g_val) ifelse(g_val == 0, n_never, cohort_size)
 
@@ -230,7 +247,16 @@ generate_data <- function(beta_g_vec, r_g_vec) {
   unit_id <- rep(1:N_total, each = T_total)
   time_id <- rep(1:T_total, times = N_total)
   alpha <- rnorm(N_total); lambda <- rnorm(T_total)
-  eps <- as.numeric(L_chol %*% rnorm(NT_all))
+  # AR(1) common factors (T x k_fac): each column is AR(1) with rho_fac
+  F_time <- matrix(0, T_total, k_fac)
+  F_time[1, ] <- rnorm(k_fac) / sqrt(1 - rho_fac^2)   # stationary initialisation
+  for (tt in 2:T_total)
+    F_time[tt, ] <- rho_fac * F_time[tt - 1, ] + rnorm(k_fac)
+  # e_{i,t} = Phi[i,] . F_time[t,]  +  sqrt(D_unit[i]) * N(0,1)
+  # Stacked unit-major: t(E) has columns = units, as.vector fills column-major = unit-major
+  E_cross <- Phi %*% t(F_time)                                    # N x T
+  E_idio  <- matrix(rnorm(NT_all), N_total, T_total) * sqrt(D_unit)  # N x T
+  eps     <- as.vector(t(E_cross + E_idio))                       # NT unit-major
   g_vec <- unit_cohort[unit_id]
   D_vec <- as.integer(g_vec > 0 & time_id >= g_vec)
   tau_vec <- numeric(N_total * T_total)
@@ -398,18 +424,17 @@ gmm_eff_homox <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
     for (d in 0:(T_total - 1)) {
       r1 <- 1:(T_total - d); r2 <- (1 + d):T_total
 
-      within_sum      <- sum(resid_mat[r1, ] * resid_mat[r2, ])
-      sigma_d[d + 1]  <- within_sum / (N_total * (T_total - d))
+      within_sum     <- sum(resid_mat[r1, ] * resid_mat[r2, ])
+      sigma_d[d + 1] <- within_sum / (N_total * (T_total - d))
 
-      # Cross-unit sum via row-sum trick: avoids O(N^2) explicit loop
-      # drop=FALSE preserves matrix shape when r1/r2 have length 1 (d = T-1)
       rs1 <- rowSums(resid_mat[r1, , drop = FALSE])
       rs2 <- rowSums(resid_mat[r2, , drop = FALSE])
       sigma_cross[d + 1] <- (sum(rs1 * rs2) - within_sum) /
                              (n_cross_pairs * (T_total - d))
     }
 
-    sigma_net <- sigma_d - sigma_cross   # net autocovariance
+    # sigma_net = sigma_d * N/(N-1) (exactly, due to time FE row-sum = 0)
+    sigma_net <- sigma_d - sigma_cross
 
     S_vec     <- sigma_net[pp_v + 1] - sigma_net[pr_v + 1] -
                  sigma_net[rp_v + 1] + sigma_net[rr_v + 1]
