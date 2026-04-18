@@ -388,6 +388,73 @@ estimate_flex_twfe <- function(dt) {
 }
 
 # ===========================================================================
+# Flex TWFE with Iterated Feasible GLS (exploiting estimated error structure)
+#   Estimates autocovariance sigma_d from residuals (like GMM_Eff)
+#   Builds per-unit variance estimates and applies inverse variance weighting
+# ===========================================================================
+
+estimate_flex_twfe_fgls <- function(dt, max_iter = 5, tol = 1e-4) {
+  tryCatch({
+    dt_f <- copy(dt)
+    setorder(dt_f, unit, time)
+
+    var_per_unit_old <- NULL
+
+    for (iter in 1:max_iter) {
+      dt_f[, treat_gt := fifelse(D == 1, g * 100L + as.integer(time), 0L)]
+
+      # Regression with current weights
+      if (iter == 1) {
+        dt_f[, obs_wt := 1.0]
+      }
+
+      mod <- tryCatch(
+        feols(Y ~ i(treat_gt, ref = 0) | unit + time, data = dt_f, weights = ~obs_wt),
+        error = function(e) NULL
+      )
+      if (is.null(mod)) break
+
+      # Extract residuals in matrix form (T x N)
+      resid_vec <- residuals(mod)
+      resid_mat <- matrix(resid_vec, nrow = T_total, ncol = N_total)
+
+      # Estimate autocovariance structure from residuals at each lag
+      sigma_d <- numeric(T_total)
+      for (d in 0:(T_total - 1)) {
+        r1 <- 1:(T_total - d)
+        r2 <- (1 + d):T_total
+        sigma_d[d + 1] <- sum(resid_mat[r1, ] * resid_mat[r2, ]) / (N_total * (T_total - d))
+      }
+
+      # Estimate per-unit variance from residuals
+      var_per_unit <- numeric(N_total)
+      for (i in 1:N_total) {
+        var_per_unit[i] <- mean(resid_mat[, i]^2)
+      }
+
+      # Check convergence
+      if (!is.null(var_per_unit_old)) {
+        if (max(abs(var_per_unit - var_per_unit_old)) / mean(var_per_unit) < tol) break
+      }
+
+      # Update weights: inverse of unit-level variance
+      # Observations from units with smaller variance get higher weight
+      dt_f[, obs_wt := 1 / (var_per_unit[unit] + 1e-6)]
+      dt_f[, obs_wt := obs_wt / mean(obs_wt)]
+
+      var_per_unit_old <- var_per_unit
+    }
+
+    # Extract coefficients
+    coef_vals <- coef(mod)
+    coef_keys <- as.integer(gsub("treat_gt::", "", names(coef_vals)))
+    idx <- match(catt_gt_key, coef_keys)
+    catt_vec <- ifelse(is.na(idx), NA_real_, coef_vals[idx])
+    list(att = mean(catt_vec, na.rm = TRUE), catt = catt_vec)
+  }, error = function(e) list(att = NA_real_, catt = rep(NA_real_, n_catt)))
+}
+
+# ===========================================================================
 # 10. Run Simulation — saves CATTs for GMM_I, Flex_TWFE, GMM_Diag, GMM_Eff
 # ===========================================================================
 
@@ -398,7 +465,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
               label, rho, N_total, true_att))
 
   est_names <- c("TWFE", "CS", "SA", "Gardner", "GMM_I",
-                 "Flex_TWFE", "GMM_Diag", "GMM_Eff")
+                 "Flex_TWFE", "Flex_TWFE_FGLS", "GMM_Diag", "GMM_Eff")
   n_est <- length(est_names)
   results <- data.table(sim = integer())
   for (nm in est_names) results[, (nm) := numeric()]
@@ -429,6 +496,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
     gmm_e_res <- tryCatch(gmm_efficient(Delta, dt),
                            error = function(e) list(att = NA_real_, catt = na_catt))
     flex_res  <- estimate_flex_twfe(dt)
+    flex_fgls_res <- estimate_flex_twfe_fgls(dt)
 
     # Store CATTs
     catt_mats[["GMM_I"]][s, ]     <- gmm_i_res$catt
@@ -443,8 +511,8 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
     results <- rbindlist(list(results, data.table(
       sim = s, TWFE = att_twfe, CS = att_cs, SA = att_sa,
       Gardner = att_gardner, GMM_I = gmm_i_res$att,
-      Flex_TWFE = flex_res$att, GMM_Diag = gmm_d_res$att,
-      GMM_Eff = gmm_e_res$att
+      Flex_TWFE = flex_res$att, Flex_TWFE_FGLS = flex_fgls_res$att,
+      GMM_Diag = gmm_d_res$att, GMM_Eff = gmm_e_res$att
     )))
   }
 
@@ -489,7 +557,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
 # ===========================================================================
 
 cat("================================================================\n")
-cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 8 estimators\n",
+cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 9 estimators\n",
             N_total, cohort_size, T_total, rho, n_sims))
 cat("================================================================\n")
 
@@ -511,6 +579,7 @@ cat("==========================================================================\
 cat(sprintf("  TABLE 2: Bias and Variance — AR(1) (rho=%.1f), N=%d (%d/cohort)\n",
             rho, N_total, cohort_size))
 cat("  GMM_I: A=I | GMM_Diag: freq-weighted diagonal | GMM_Eff: Omega_phi^{-1}\n")
+cat("  Flex_TWFE_FGLS: Iterated feasible GLS exploiting AR(1)\n")
 cat("==========================================================================\n\n")
 
 table2 <- merge(
@@ -519,7 +588,7 @@ table2 <- merge(
   by = "Estimator"
 )
 est_order <- c("TWFE", "CS", "SA", "Gardner", "GMM_I",
-               "Flex_TWFE", "GMM_Diag", "GMM_Eff")
+               "Flex_TWFE", "Flex_TWFE_FGLS", "GMM_Diag", "GMM_Eff")
 table2 <- table2[match(est_order, table2$Estimator)]
 
 cat(sprintf("%-16s  %12s  %12s  %12s  %12s\n",
