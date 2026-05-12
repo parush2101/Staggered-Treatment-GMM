@@ -160,56 +160,50 @@ for (g_c in treated_g_gmm)
     catt_list_gmm[[length(catt_list_gmm) + 1L]] <- c(g_c, g_c + k)
 n_catt_gmm <- length(catt_list_gmm)
 
-# --- 6d. Enumerate DiD moments (never / not-yet / already-treated) ---
-did_meta_gmm <- list()
-for (catt_idx in seq_len(n_catt_gmm)) {
-  g_c    <- catt_list_gmm[[catt_idx]][1]
-  t_post <- catt_list_gmm[[catt_idx]][2]
-  if (g_c <= 1L) next          # no pre-periods for cohort treated at t=1
+# CATT lookup table for joins; g/t vectors reused in tau subtraction
+catt_dt    <- data.table(catt_idx = seq_len(n_catt_gmm),
+                          g        = as.integer(sapply(catt_list_gmm, `[`, 1L)),
+                          t        = as.integer(sapply(catt_list_gmm, `[`, 2L)))
+setkey(catt_dt, g, t)
+catt_g_gmm <- catt_dt$g
+catt_t_gmm <- catt_dt$t
 
-  for (m in seq_len(g_c - 1L)) {
-    t_pre <- g_c - m
+# --- 6d. Enumerate DiD moments via vectorised data.table operations ---
+# Expand CATTs (focal_g > 1) over all valid pre-periods
+catt_base <- catt_dt[g > 1L, .(catt_idx, focal_g = g, t_post = t)]
+pre_exp   <- catt_base[, .(t_pre = seq_len(focal_g - 1L)),
+                         by = .(catt_idx, focal_g, t_post)]
 
-    # Not-yet-treated cohorts
-    for (g_l in treated_g_gmm) {
-      if (g_l <= t_post) next
-      did_meta_gmm[[length(did_meta_gmm) + 1L]] <- list(
-        catt_idx = catt_idx, type = "notyet",
-        focal_g = g_c, ctrl_g = g_l, t_post = t_post, t_pre = t_pre
-      )
-    }
-    # Already-treated cohorts (bias-corrected)
-    for (g_j in treated_g_gmm) {
-      j <- g_c - g_j
-      if (j <= m || g_j >= g_c) next
-      bias_neg <- NULL; bias_pos <- NULL
-      for (ci in seq_len(n_catt_gmm)) {
-        if (catt_list_gmm[[ci]][1] == g_j && catt_list_gmm[[ci]][2] == t_post) bias_neg <- ci
-        if (catt_list_gmm[[ci]][1] == g_j && catt_list_gmm[[ci]][2] == t_pre)  bias_pos <- ci
-      }
-      did_meta_gmm[[length(did_meta_gmm) + 1L]] <- list(
-        catt_idx = catt_idx, type = "already",
-        bias_neg = bias_neg, bias_pos = bias_pos,
-        focal_g = g_c, ctrl_g = g_j, t_post = t_post, t_pre = t_pre
-      )
-    }
-  }
-}
-n_did_gmm <- length(did_meta_gmm)
+# Cross each (CATT, pre-period) with every treated cohort as potential control
+combos <- pre_exp[, .(ctrl_g = treated_g_gmm),
+                   by = .(catt_idx, focal_g, t_post, t_pre)]
+
+# Not-yet-treated: ctrl_g not yet treated by t_post
+notyet_dt <- combos[ctrl_g > t_post]
+notyet_dt[, `:=`(type = "notyet", bias_neg = NA_integer_, bias_pos = NA_integer_)]
+
+# Already-treated: ctrl_g < focal_g AND ctrl_g < t_pre (equivalent to j > m in original)
+already_dt <- combos[ctrl_g < focal_g & ctrl_g < t_pre]
+already_dt[, type := "already"]
+already_dt[catt_dt, on = .(ctrl_g = g, t_post = t), bias_neg := i.catt_idx]
+already_dt[catt_dt, on = .(ctrl_g = g, t_pre  = t), bias_pos := i.catt_idx]
+
+did_meta_dt <- rbind(notyet_dt, already_dt, fill = TRUE)
+setorder(did_meta_dt, catt_idx, type)
+n_did_gmm   <- nrow(did_meta_dt)
 cat(sprintf("  n_catt = %d  |  n_did = %d\n", n_catt_gmm, n_did_gmm))
 
-# --- 6e. Build Q_H (modified incidence matrix) ---
-Q_H_gmm <- matrix(0, nrow = n_did_gmm, ncol = n_catt_gmm)
-for (s in seq_len(n_did_gmm)) {
-  est <- did_meta_gmm[[s]]
-  Q_H_gmm[s, est$catt_idx] <- 1L
-  if (est$type == "already") {
-    if (!is.null(est$bias_neg) && !is.na(est$bias_neg))
-      Q_H_gmm[s, est$bias_neg] <- Q_H_gmm[s, est$bias_neg] - 1L
-    if (!is.null(est$bias_pos) && !is.na(est$bias_pos))
-      Q_H_gmm[s, est$bias_pos] <- Q_H_gmm[s, est$bias_pos] + 1L
-  }
-}
+# --- 6e. Build Q_H (modified incidence matrix) via sparse triplets ---
+already_rows <- which(did_meta_dt$type == "already")
+bn_rows <- already_rows[!is.na(did_meta_dt$bias_neg[already_rows])]
+bp_rows <- already_rows[!is.na(did_meta_dt$bias_pos[already_rows])]
+
+Q_H_gmm <- as.matrix(sparseMatrix(
+  i    = c(seq_len(n_did_gmm),    bn_rows,                         bp_rows),
+  j    = c(did_meta_dt$catt_idx,  did_meta_dt$bias_neg[bn_rows],   did_meta_dt$bias_pos[bp_rows]),
+  x    = c(rep(1L, n_did_gmm),    rep(-1L, length(bn_rows)),        rep(1L, length(bp_rows))),
+  dims = c(n_did_gmm, n_catt_gmm)
+))
 QtQ_gmm     <- crossprod(Q_H_gmm)
 QtQ_inv_gmm <- tryCatch(solve(QtQ_gmm), error = function(e) ginv(QtQ_gmm))
 
@@ -217,10 +211,10 @@ QtQ_inv_gmm <- tryCatch(solve(QtQ_gmm), error = function(e) ginv(QtQ_gmm))
 # C_mat[s,s'] is non-zero only when moments s and s' share a cohort.
 # Build by iterating over cohorts and accumulating triplets — avoids
 # materialising the full n_did x n_did dense matrix (~20GB with all pre-periods).
-meta_focal_gmm <- as.integer(sapply(did_meta_gmm, `[[`, "focal_g"))
-meta_ctrl_gmm  <- as.integer(sapply(did_meta_gmm, `[[`, "ctrl_g"))
-meta_tp_gmm    <- as.integer(sapply(did_meta_gmm, `[[`, "t_post"))
-meta_tr_gmm    <- as.integer(sapply(did_meta_gmm, `[[`, "t_pre"))
+meta_focal_gmm <- did_meta_dt$focal_g
+meta_ctrl_gmm  <- did_meta_dt$ctrl_g
+meta_tp_gmm    <- did_meta_dt$t_post
+meta_tr_gmm    <- did_meta_dt$t_pre
 
 moments_by_focal_gmm <- split(seq_len(n_did_gmm), meta_focal_gmm)
 moments_by_ctrl_gmm  <- split(seq_len(n_did_gmm), meta_ctrl_gmm)
@@ -319,15 +313,11 @@ cat("  Pre-computation done.\n")
 compute_delta_gmm <- function(dt_g) {
   cmeans <- dt_g[, .(Y_mean = mean(Y)), by = .(g, time)]
   setkey(cmeans, g, time)
-  Delta <- numeric(n_did_gmm)
-  for (s in seq_len(n_did_gmm)) {
-    e <- did_meta_gmm[[s]]
-    Delta[s] <- (cmeans[.(e$focal_g, e$t_post), Y_mean] -
-                 cmeans[.(e$focal_g, e$t_pre),  Y_mean]) -
-                (cmeans[.(e$ctrl_g,  e$t_post), Y_mean] -
-                 cmeans[.(e$ctrl_g,  e$t_pre),  Y_mean])
-  }
-  Delta
+  Y_fp <- cmeans[.(did_meta_dt$focal_g, did_meta_dt$t_post), Y_mean]
+  Y_fr <- cmeans[.(did_meta_dt$focal_g, did_meta_dt$t_pre),  Y_mean]
+  Y_cp <- cmeans[.(did_meta_dt$ctrl_g,  did_meta_dt$t_post), Y_mean]
+  Y_cr <- cmeans[.(did_meta_dt$ctrl_g,  did_meta_dt$t_pre),  Y_mean]
+  (Y_fp - Y_fr) - (Y_cp - Y_cr)
 }
 
 # --- 6i. Iterative efficient GMM ---
@@ -340,11 +330,10 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
   for (iter in seq_len(max_iter)) {
     beta_old <- beta_hat
 
-    # Subtract estimated treatment effects from outcome
+    # Subtract estimated treatment effects via join (replaces per-CATT loop)
+    tau_lkp <- data.table(g = catt_g_gmm, time = catt_t_gmm, tau = beta_hat)
     dt_r[, tau_hat := 0]
-    for (ci in seq_len(n_catt_gmm))
-      dt_r[g == catt_list_gmm[[ci]][1] & time == catt_list_gmm[[ci]][2],
-           tau_hat := beta_hat[ci]]
+    dt_r[tau_lkp, on = .(g, time), tau_hat := i.tau]
     dt_r[, Y_adj := Y - tau_hat]
 
     # Two-way FE residuals, arranged as T x N matrix
