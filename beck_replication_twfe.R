@@ -158,13 +158,18 @@ for (g_c in treated_g_gmm)
 n_catt_gmm <- length(catt_list_gmm)
 
 # --- 6d. Enumerate DiD moments (never / not-yet / already-treated) ---
+# Cap pre-periods to 1 (most recent pre-period only).
+# Using all m in 1..(g_c-1) generates ~50K moments for Beck's 20 cohorts,
+# making Omega_phi (~50K x 50K) impossible to allocate or invert.
+max_pre_periods <- 1L
+
 did_meta_gmm <- list()
 for (catt_idx in seq_len(n_catt_gmm)) {
   g_c    <- catt_list_gmm[[catt_idx]][1]
   t_post <- catt_list_gmm[[catt_idx]][2]
   if (g_c <= 1L) next          # no pre-periods for cohort treated at t=1
 
-  for (m in seq_len(g_c - 1L)) {
+  for (m in seq_len(min(g_c - 1L, max_pre_periods))) {
     t_pre <- g_c - m
 
     # Never / always-treated as control (g=0)
