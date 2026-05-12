@@ -370,9 +370,12 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
     Omega_phi <- forceSymmetric((Omega_phi + t(Omega_phi)) / 2)
     Omega_phi <- Omega_phi + 1e-6 * Diagonal(n_did_gmm)
 
-    OQ <- tryCatch(Matrix::solve(Omega_phi, Q_H_gmm), error = function(e) NULL)
-    if (is.null(OQ)) break
-    OD <- as.numeric(Matrix::solve(Omega_phi, Delta))
+    # Factor once; reuse Cholesky for both RHS solves (halves factorization cost)
+    ch <- tryCatch(Matrix::Cholesky(Omega_phi, perm = TRUE, LDL = FALSE),
+                   error = function(e) NULL)
+    if (is.null(ch)) break
+    OQ <- Matrix::solve(ch, Q_H_gmm)
+    OD <- as.numeric(Matrix::solve(ch, Delta))
 
     beta_hat <- as.numeric(tryCatch(
       solve(as.matrix(crossprod(Q_H_gmm, OQ)),
@@ -387,9 +390,9 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
 
   # SE via efficient GMM formula (Table 6 note: "(Q'Omega^{-1}Q)^{-1}")
   #   Var[theta_hat] = w' (Q'_H Omega^{-1} Q_H)^{-1} w,  w = unit weights
+  # OQ = Omega_phi^{-1} Q_H from the final iteration; reuse directly
   se <- tryCatch({
-    OmInvQ       <- Matrix::solve(Omega_phi, Q_H_gmm)
-    QtOmInvQ     <- as.matrix(crossprod(Q_H_gmm, OmInvQ))
+    QtOmInvQ     <- as.matrix(crossprod(Q_H_gmm, OQ))
     QtOmInvQ_inv <- solve(QtOmInvQ)
     sqrt(as.numeric(t(w_unit_gmm) %*% QtOmInvQ_inv %*% w_unit_gmm))
   }, error = function(e) NA_real_)
