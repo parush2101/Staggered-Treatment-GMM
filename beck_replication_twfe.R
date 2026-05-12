@@ -29,6 +29,7 @@ library(fixest)
 library(did)
 library(did2s)
 library(MASS)
+library(Matrix)
 
 # ---------------------------------------------------------------------------
 # Load data
@@ -158,18 +159,13 @@ for (g_c in treated_g_gmm)
 n_catt_gmm <- length(catt_list_gmm)
 
 # --- 6d. Enumerate DiD moments (never / not-yet / already-treated) ---
-# Cap pre-periods to 1 (most recent pre-period only).
-# Using all m in 1..(g_c-1) generates ~50K moments for Beck's 20 cohorts,
-# making Omega_phi (~50K x 50K) impossible to allocate or invert.
-max_pre_periods <- 1L
-
 did_meta_gmm <- list()
 for (catt_idx in seq_len(n_catt_gmm)) {
   g_c    <- catt_list_gmm[[catt_idx]][1]
   t_post <- catt_list_gmm[[catt_idx]][2]
   if (g_c <= 1L) next          # no pre-periods for cohort treated at t=1
 
-  for (m in seq_len(min(g_c - 1L, max_pre_periods))) {
+  for (m in seq_len(g_c - 1L)) {
     t_pre <- g_c - m
 
     # Never / always-treated as control (g=0)
@@ -220,28 +216,97 @@ for (s in seq_len(n_did_gmm)) {
 QtQ_gmm     <- crossprod(Q_H_gmm)
 QtQ_inv_gmm <- tryCatch(solve(QtQ_gmm), error = function(e) ginv(QtQ_gmm))
 
-# --- 6f. Metadata vectors and C_mat (cohort-size structural factor) ---
+# --- 6f. Metadata vectors and SPARSE C_mat (cohort-size structural factor) ---
+# C_mat[s,s'] is non-zero only when moments s and s' share a cohort.
+# Build by iterating over cohorts and accumulating triplets — avoids
+# materialising the full n_did x n_did dense matrix (~20GB with all pre-periods).
 meta_focal_gmm <- as.integer(sapply(did_meta_gmm, `[[`, "focal_g"))
 meta_ctrl_gmm  <- as.integer(sapply(did_meta_gmm, `[[`, "ctrl_g"))
 meta_tp_gmm    <- as.integer(sapply(did_meta_gmm, `[[`, "t_post"))
 meta_tr_gmm    <- as.integer(sapply(did_meta_gmm, `[[`, "t_pre"))
 
-N_f_gmm <- sapply(meta_focal_gmm, get_csize)
-N_c_gmm <- sapply(meta_ctrl_gmm,  get_csize)
+moments_by_focal_gmm <- split(seq_len(n_did_gmm), meta_focal_gmm)
+moments_by_ctrl_gmm  <- split(seq_len(n_did_gmm), meta_ctrl_gmm)
+all_cohorts_C        <- unique(c(meta_focal_gmm, meta_ctrl_gmm))
 
-gg   <- outer(meta_focal_gmm, meta_focal_gmm, "==")
-gc_m <- outer(meta_focal_gmm, meta_ctrl_gmm,  "==")
-cg   <- outer(meta_ctrl_gmm,  meta_focal_gmm, "==")
-cc   <- outer(meta_ctrl_gmm,  meta_ctrl_gmm,  "==")
-C_mat_gmm <- sweep(gg - gc_m, 1L, 1 / N_f_gmm, "*") +
-             sweep(cc - cg,   1L, 1 / N_c_gmm, "*")
-rm(gg, gc_m, cg, cc); invisible(gc())
+# Pass 1: count total triplets for pre-allocation
+n_sp_total <- 0L
+for (g in all_cohorts_C) {
+  n_ff <- length(moments_by_focal_gmm[[as.character(g)]])
+  n_cc <- length(moments_by_ctrl_gmm[[as.character(g)]])
+  n_sp_total <- n_sp_total + n_ff * n_ff + n_cc * n_cc + 2L * n_ff * n_cc
+}
+cat(sprintf("  Allocating %d sparse triplets (~%.0f MB)\n",
+            n_sp_total, n_sp_total * 16 / 1e6))
 
-# --- 6g. Lag index vectors (for autocovariance S_mat) ---
-pp_v_gmm <- as.vector(abs(outer(meta_tp_gmm, meta_tp_gmm, "-")))
-pr_v_gmm <- as.vector(abs(outer(meta_tp_gmm, meta_tr_gmm, "-")))
-rp_v_gmm <- as.vector(abs(outer(meta_tr_gmm, meta_tp_gmm, "-")))
-rr_v_gmm <- as.vector(abs(outer(meta_tr_gmm, meta_tr_gmm, "-")))
+sp_i <- integer(n_sp_total)
+sp_j <- integer(n_sp_total)
+sp_c <- numeric(n_sp_total)
+pos  <- 1L
+
+# Pass 2: fill triplets
+# C_mat[s,s'] contributions per cohort g (with size N_g):
+#   focal(s)==g & focal(s')==g  ->  +1/N_g
+#   ctrl(s)==g  & ctrl(s')==g   ->  +1/N_g
+#   focal(s)==g & ctrl(s')==g   ->  -1/N_g
+#   ctrl(s)==g  & focal(s')==g  ->  -1/N_g
+for (g in all_cohorts_C) {
+  inv_Ng <- 1 / get_csize(g)
+  ff  <- moments_by_focal_gmm[[as.character(g)]]
+  cc  <- moments_by_ctrl_gmm[[as.character(g)]]
+  n_ff <- length(ff); n_cc <- length(cc)
+
+  if (n_ff > 0L) {
+    n_blk <- n_ff * n_ff
+    idx <- pos:(pos + n_blk - 1L)
+    sp_i[idx] <- rep(ff, each = n_ff)
+    sp_j[idx] <- rep(ff, times = n_ff)
+    sp_c[idx] <- inv_Ng
+    pos <- pos + n_blk
+  }
+  if (n_cc > 0L) {
+    n_blk <- n_cc * n_cc
+    idx <- pos:(pos + n_blk - 1L)
+    sp_i[idx] <- rep(cc, each = n_cc)
+    sp_j[idx] <- rep(cc, times = n_cc)
+    sp_c[idx] <- inv_Ng
+    pos <- pos + n_blk
+  }
+  if (n_ff > 0L && n_cc > 0L) {
+    n_blk <- n_ff * n_cc
+    idx <- pos:(pos + n_blk - 1L)          # focal(s)=g, ctrl(s')=g
+    sp_i[idx] <- rep(ff, each = n_cc)
+    sp_j[idx] <- rep(cc, times = n_ff)
+    sp_c[idx] <- -inv_Ng
+    pos <- pos + n_blk
+    idx <- pos:(pos + n_blk - 1L)          # ctrl(s)=g, focal(s')=g
+    sp_i[idx] <- rep(cc, each = n_ff)
+    sp_j[idx] <- rep(ff, times = n_cc)
+    sp_c[idx] <- -inv_Ng
+    pos <- pos + n_blk
+  }
+}
+
+# sparseMatrix sums duplicate (i,j) entries automatically
+C_mat_sp <- sparseMatrix(i = sp_i, j = sp_j, x = sp_c,
+                         dims = c(n_did_gmm, n_did_gmm))
+rm(sp_i, sp_j, sp_c); invisible(gc())
+
+# Extract consolidated non-zero positions for per-iteration S_mat lookup
+C_nz    <- summary(C_mat_sp)
+sp_i_nz <- C_nz$i
+sp_j_nz <- C_nz$j
+sp_c_nz <- C_nz$x
+cat(sprintf("  C_mat: %d non-zeros (%.2f%% fill in %dx%d)\n",
+            length(sp_i_nz), 100 * length(sp_i_nz) / n_did_gmm^2,
+            n_did_gmm, n_did_gmm))
+
+# --- 6g. Lag indices at non-zero C_mat positions (for S_mat lookup each iter) ---
+# Only compute lags where C_mat is non-zero; avoids n_did^2-length vectors.
+sp_pp_nz <- abs(meta_tp_gmm[sp_i_nz] - meta_tp_gmm[sp_j_nz]) + 1L
+sp_pr_nz <- abs(meta_tp_gmm[sp_i_nz] - meta_tr_gmm[sp_j_nz]) + 1L
+sp_rp_nz <- abs(meta_tr_gmm[sp_i_nz] - meta_tp_gmm[sp_j_nz]) + 1L
+sp_rr_nz <- abs(meta_tr_gmm[sp_i_nz] - meta_tr_gmm[sp_j_nz]) + 1L
 
 # --- 6h. Unit aggregation weights (in line with Callaway & Sant'Anna 2021) ---
 # w[ci] = N_{g_ci} / sum_{all CATTs ci'} N_{g_ci'}
@@ -299,19 +364,22 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
                          (N_gmm * (T_gmm - d))
     }
 
-    # Moment covariance Omega_phi = C_mat * S_mat
-    S_vec     <- sigma_d[pp_v_gmm + 1L] - sigma_d[pr_v_gmm + 1L] -
-                 sigma_d[rp_v_gmm + 1L] + sigma_d[rr_v_gmm + 1L]
-    Omega_phi <- C_mat_gmm * matrix(S_vec, nrow = n_did_gmm)
-    Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
-    diag(Omega_phi) <- diag(Omega_phi) + 1e-6
+    # Sparse Omega_phi = C_mat ⊙ S_mat evaluated only at non-zero positions
+    s_vals    <- sigma_d[sp_pp_nz] - sigma_d[sp_pr_nz] -
+                 sigma_d[sp_rp_nz] + sigma_d[sp_rr_nz]
+    Omega_phi <- sparseMatrix(i = sp_i_nz, j = sp_j_nz,
+                               x = sp_c_nz * s_vals,
+                               dims = c(n_did_gmm, n_did_gmm))
+    Omega_phi <- forceSymmetric((Omega_phi + t(Omega_phi)) / 2)
+    Omega_phi <- Omega_phi + 1e-6 * Diagonal(n_did_gmm)
 
-    OQ <- tryCatch(solve(Omega_phi, Q_H_gmm), error = function(e) NULL)
+    OQ <- tryCatch(Matrix::solve(Omega_phi, Q_H_gmm), error = function(e) NULL)
     if (is.null(OQ)) break
-    OD <- solve(Omega_phi, Delta)
+    OD <- as.numeric(Matrix::solve(Omega_phi, Delta))
 
     beta_hat <- as.numeric(tryCatch(
-      solve(crossprod(Q_H_gmm, OQ), crossprod(Q_H_gmm, OD)),
+      solve(as.matrix(crossprod(Q_H_gmm, OQ)),
+            as.numeric(crossprod(Q_H_gmm, OD))),
       error = function(e) beta_old
     ))
     if (max(abs(beta_hat - beta_old)) < tol) break
@@ -323,8 +391,8 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
   # SE via efficient GMM formula (Table 6 note: "(Q'Omega^{-1}Q)^{-1}")
   #   Var[theta_hat] = w' (Q'_H Omega^{-1} Q_H)^{-1} w,  w = unit weights
   se <- tryCatch({
-    OmInvQ       <- solve(Omega_phi, Q_H_gmm)
-    QtOmInvQ     <- crossprod(Q_H_gmm, OmInvQ)
+    OmInvQ       <- Matrix::solve(Omega_phi, Q_H_gmm)
+    QtOmInvQ     <- as.matrix(crossprod(Q_H_gmm, OmInvQ))
     QtOmInvQ_inv <- solve(QtOmInvQ)
     sqrt(as.numeric(t(w_unit_gmm) %*% QtOmInvQ_inv %*% w_unit_gmm))
   }, error = function(e) NA_real_)
