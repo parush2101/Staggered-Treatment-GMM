@@ -238,6 +238,14 @@ pr_v_gmm <- as.vector(abs(outer(meta_tp_gmm, meta_tr_gmm, "-")))
 rp_v_gmm <- as.vector(abs(outer(meta_tr_gmm, meta_tp_gmm, "-")))
 rr_v_gmm <- as.vector(abs(outer(meta_tr_gmm, meta_tr_gmm, "-")))
 
+# --- 6h. Unit aggregation weights (in line with Callaway & Sant'Anna 2021) ---
+# w[ci] = N_{g_ci} / sum_{all CATTs ci'} N_{g_ci'}
+# Cohorts with more states receive proportionally more weight.
+# (In the simulation all cohorts have size 10, so this equals 1/n_catt there.)
+catt_cohort_n <- sapply(seq_len(n_catt_gmm),
+                        function(ci) get_csize(catt_list_gmm[[ci]][1]))
+w_unit_gmm    <- catt_cohort_n / sum(catt_cohort_n)
+
 cat("  Pre-computation done.\n")
 
 # --- 6h. Compute Delta (vector of 2x2 DiD estimates) ---
@@ -304,17 +312,16 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
     if (max(abs(beta_hat - beta_old)) < tol) break
   }
 
-  # ATT: equal-weighted mean of CATTs
-  att <- mean(beta_hat)
+  # ATT: unit-weighted mean of CATTs (w[ci] = N_{g_ci} / total treated obs)
+  att <- sum(w_unit_gmm * beta_hat)
 
   # SE via efficient GMM formula (Table 6 note: "(Q'Omega^{-1}Q)^{-1}")
-  #   Var[theta_hat] = w' (Q'_H Omega^{-1} Q_H)^{-1} w,  w = 1/n_catt * 1
+  #   Var[theta_hat] = w' (Q'_H Omega^{-1} Q_H)^{-1} w,  w = unit weights
   se <- tryCatch({
-    OmInvQ      <- solve(Omega_phi, Q_H_gmm)
-    QtOmInvQ    <- crossprod(Q_H_gmm, OmInvQ)
+    OmInvQ       <- solve(Omega_phi, Q_H_gmm)
+    QtOmInvQ     <- crossprod(Q_H_gmm, OmInvQ)
     QtOmInvQ_inv <- solve(QtOmInvQ)
-    w <- rep(1 / n_catt_gmm, n_catt_gmm)
-    sqrt(as.numeric(t(w) %*% QtOmInvQ_inv %*% w))
+    sqrt(as.numeric(t(w_unit_gmm) %*% QtOmInvQ_inv %*% w_unit_gmm))
   }, error = function(e) NA_real_)
 
   list(att = att, se = se, beta_hat = beta_hat)
