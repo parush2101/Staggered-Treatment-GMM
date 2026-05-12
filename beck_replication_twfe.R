@@ -13,7 +13,7 @@
 #     CS        -> g_cs  = 0    (coded as never-treated control)
 #     SA / Flex -> g_inf = Inf  (coded as never-treated reference)
 #     Gardner   -> first_treat = Inf (contributes to first-stage FE as control)
-#     GMM       -> g_idx = 0   (plays role of never-treated control cohort)
+#     GMM       -> g_idx = 0   (excluded from estimation entirely)
 #
 # Estimators (Table 6, Panel A targets):
 #   1. Pooled TWFE           -0.0213  (0.0076)
@@ -138,16 +138,18 @@ dt[, time_idx := as.integer(wrkyr - year_min + 1L)]
 dt[, g_idx    := fifelse(branch_reform < year_min, 0L,
                           as.integer(branch_reform - year_min + 1L))]
 
-# Standardise column names; sort unit-major (required for residual matrix)
-dt_gmm <- dt[order(statefip, time_idx),
+# Exclude always-treated states (g_idx=0) entirely from GMM — no focal, no control.
+# Keep only states with known within-sample treatment timing.
+dt_gmm <- dt[g_idx > 0L][order(statefip, time_idx),
              .(unit = statefip, time = time_idx, Y = ln_gini, g = g_idx)]
+N_gmm  <- dt_gmm[, uniqueN(unit)]   # 37 (12 always-treated removed)
 
 # --- 6b. Cohort sizes ---
 cohort_sz  <- dt_gmm[, .(N_g = uniqueN(unit)), by = g]
 setkey(cohort_sz, g)
 get_csize  <- function(g_val) cohort_sz[.(g_val), N_g]
 
-treated_g_gmm <- sort(unique(dt_gmm$g[dt_gmm$g > 0L]))
+treated_g_gmm <- sort(unique(dt_gmm$g))
 cat(sprintf("  %d treated cohorts  |  T=%d  |  N=%d\n",
             length(treated_g_gmm), T_gmm, N_gmm))
 
@@ -168,11 +170,6 @@ for (catt_idx in seq_len(n_catt_gmm)) {
   for (m in seq_len(g_c - 1L)) {
     t_pre <- g_c - m
 
-    # Never / always-treated as control (g=0)
-    did_meta_gmm[[length(did_meta_gmm) + 1L]] <- list(
-      catt_idx = catt_idx, type = "never",
-      focal_g = g_c, ctrl_g = 0L, t_post = t_post, t_pre = t_pre
-    )
     # Not-yet-treated cohorts
     for (g_l in treated_g_gmm) {
       if (g_l <= t_post) next
