@@ -16,7 +16,7 @@
 #     CS        -> g_cs  = 0    (coded as never-treated control)
 #     SA / Flex -> g_inf = Inf  (coded as never-treated reference)
 #     Gardner   -> first_treat = Inf (contributes to first-stage FE)
-#     GMM       -> g_idx = 0   (excluded from estimation entirely)
+#     GMM       -> g_idx = T+1 (always "not yet treated"; valid control for every cohort)
 #
 # No always-treated cohorts exist (all effyear in 2005-2009, within sample).
 #
@@ -139,24 +139,29 @@ N_gmm    <- dt[, uniqueN(sid)]
 year_min <- first_yr
 
 dt[, time_idx := as.integer(year - year_min + 1L)]
-dt[, g_idx    := fifelse(is.na(effyear), 0L,
+# Never-treated get sentinel g_idx = T_gmm + 1, which always exceeds any t_post (<=T_gmm),
+# so they unconditionally qualify as "not yet treated" controls in every DiD moment.
+dt[, g_idx    := fifelse(is.na(effyear), as.integer(T_gmm + 1L),
                           as.integer(effyear - year_min + 1L))]
 
-# Exclude never-treated states (g_idx=0) entirely from GMM.
-# Keep only states with known within-sample treatment timing.
-dt_gmm <- dt[g_idx > 0L][order(sid, time_idx),
+# All 50 states enter dt_gmm; never-treated participate as controls, not as focal cohorts.
+dt_gmm <- dt[order(sid, time_idx),
              .(unit = sid, time = time_idx, Y = l_homicide, g = g_idx)]
 N_gmm  <- dt_gmm[, uniqueN(unit)]
 
-cat(sprintf("  %d treated cohorts (by time index) | T=%d | N=%d\n",
-            dt_gmm[, uniqueN(g)], T_gmm, N_gmm))
+n_nt <- dt_gmm[g == T_gmm + 1L, uniqueN(unit)]
+cat(sprintf("  %d treated cohorts | %d never-treated controls | T=%d | N=%d\n",
+            dt_gmm[g <= T_gmm, uniqueN(g)], n_nt, T_gmm, N_gmm))
 
 # --- 6b. Cohort sizes ---
 cohort_sz  <- dt_gmm[, .(N_g = uniqueN(unit)), by = g]
 setkey(cohort_sz, g)
 get_csize  <- function(g_val) cohort_sz[.(g_val), N_g]
 
-treated_g_gmm <- sort(unique(dt_gmm$g))
+# Focal cohorts: actually treated states (g <= T_gmm); used for CATT enumeration and weights.
+# Control cohorts: all unique g values, including never-treated sentinel (T_gmm + 1).
+treated_g_gmm <- sort(unique(dt_gmm$g[dt_gmm$g <= T_gmm]))
+ctrl_g_gmm    <- sort(unique(dt_gmm$g))
 
 # --- 6c. Enumerate CATTs ---
 catt_list_gmm <- list()
@@ -179,8 +184,9 @@ catt_base <- catt_dt[g > 1L, .(catt_idx, focal_g = g, t_post = t)]
 pre_exp   <- catt_base[, .(t_pre = seq_len(focal_g - 1L)),
                          by = .(catt_idx, focal_g, t_post)]
 
-# Cross each (CATT, pre-period) with every treated cohort as potential control
-combos <- pre_exp[, .(ctrl_g = treated_g_gmm),
+# Cross each (CATT, pre-period) with every cohort as potential control,
+# including the never-treated sentinel (ctrl_g_gmm covers all 50 states).
+combos <- pre_exp[, .(ctrl_g = ctrl_g_gmm),
                    by = .(catt_idx, focal_g, t_post, t_pre)]
 
 # Not-yet-treated: ctrl_g not yet treated by t_post
