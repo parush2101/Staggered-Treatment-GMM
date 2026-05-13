@@ -326,6 +326,7 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
   dt_r      <- copy(dt_g)
   setorder(dt_r, unit, time)
   Omega_phi <- NULL
+  OQ        <- NULL   # initialised here so SE block can detect Cholesky failure
 
   for (iter in seq_len(max_iter)) {
     beta_old <- beta_hat
@@ -363,7 +364,7 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
     ch <- tryCatch(Matrix::Cholesky(Omega_phi, perm = TRUE, LDL = FALSE),
                    error = function(e) NULL)
     if (is.null(ch)) break
-    OQ <- Matrix::solve(ch, Q_H_gmm)
+    OQ <- as.matrix(Matrix::solve(ch, Q_H_gmm))  # coerce to base matrix for crossprod
     OD <- as.numeric(Matrix::solve(ch, Delta))
 
     beta_hat <- as.numeric(tryCatch(
@@ -377,12 +378,15 @@ gmm_efficient_beck <- function(Delta, dt_g, max_iter = 3, tol = 1e-6) {
   # ATT: unit-weighted mean of CATTs (w[ci] = N_{g_ci} / total treated obs)
   att <- sum(w_unit_gmm * beta_hat)
 
-  # SE via efficient GMM formula (Table 6 note: "(Q'Omega^{-1}Q)^{-1}")
-  #   Var[theta_hat] = w' (Q'_H Omega^{-1} Q_H)^{-1} w,  w = unit weights
-  # OQ = Omega_phi^{-1} Q_H from the final iteration; reuse directly
+  # SE via efficient GMM formula: Var = w' (Q'_H Omega^{-1} Q_H)^{-1} w
+  # OQ from the final iteration is Omega^{-1} Q_H; if Cholesky failed fall back
+  # to a direct sparse LU solve (works even when Omega_phi is not PD).
   se <- tryCatch({
-    QtOmInvQ     <- as.matrix(crossprod(Q_H_gmm, OQ))
-    QtOmInvQ_inv <- solve(QtOmInvQ)
+    OQ_se <- if (!is.null(OQ)) OQ else
+               as.matrix(Matrix::solve(Omega_phi, Q_H_gmm))
+    QtOmInvQ     <- crossprod(Q_H_gmm, OQ_se)
+    QtOmInvQ_inv <- tryCatch(solve(QtOmInvQ),
+                             error = function(e) ginv(as.matrix(QtOmInvQ)))
     sqrt(as.numeric(t(w_unit_gmm) %*% QtOmInvQ_inv %*% w_unit_gmm))
   }, error = function(e) NA_real_)
 
