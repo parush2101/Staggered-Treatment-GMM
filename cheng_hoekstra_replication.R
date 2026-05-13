@@ -1,5 +1,5 @@
 ###############################################################################
-# Cheng & Hoekstra (2013) Replication — Panel A / Panel B
+# Cheng & Hoekstra (2013) Replication — Full Sample (50 states)
 #
 # Source: Cheng, C., & Hoekstra, M. (2013). Does Strengthening Self-Defense
 #   Law Deter Crime or Escalate Violence? Journal of Human Resources.
@@ -11,16 +11,14 @@
 #   effyear : castle doctrine adoption year (NA = never adopted)
 #   post    : 1 if castle doctrine currently in effect
 #
-# Panel A: Full sample — 50 states, 550 obs (29 never-treated included)
+# Full sample: 50 states, 550 obs (29 never-treated included).
 #   Never-treated handling:
 #     CS        -> g_cs  = 0    (coded as never-treated control)
 #     SA / Flex -> g_inf = Inf  (coded as never-treated reference)
 #     Gardner   -> first_treat = Inf (contributes to first-stage FE)
 #     GMM       -> g_idx = 0   (excluded from estimation entirely)
 #
-# Panel B: Restricted — 21 treated states, 231 obs (never-treated dropped)
-#   All estimators use only staggered-treated states; controls are
-#   not-yet-treated units.  GMM subset identical to Panel A.
+# No always-treated cohorts exist (all effyear in 2005-2009, within sample).
 #
 # Estimators:
 #   1. Pooled TWFE
@@ -38,13 +36,6 @@ library(did2s)
 library(MASS)
 library(Matrix)
 
-# ===========================================================================
-# PANEL SELECTION  <- change this before running
-#   "A" — full sample  : 50 states, 550 obs  (29 never-treated included)
-#   "B" — restricted   : 21 states, 231 obs  (never-treated dropped)
-# ===========================================================================
-PANEL <- "A"
-
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
@@ -52,15 +43,10 @@ dt <- as.data.table(did2s::castle)
 
 first_yr <- min(dt$year)   # 2000
 
-# Panel B: drop the 29 states that never adopted castle doctrine
-if (PANEL == "B") dt <- dt[!is.na(effyear)]
+cat(sprintf("%d obs, %d states, %d years\n",
+            nrow(dt), dt[, uniqueN(sid)], dt[, uniqueN(year)]))
 
-cat(sprintf("Panel %s: %d obs, %d states, %d years\n",
-            PANEL, nrow(dt), dt[, uniqueN(sid)], dt[, uniqueN(year)]))
-
-# Cohort variables
-# Panel A: never-treated states (effyear = NA) receive sentinel values
-# Panel B: no never-treated remain so is.na(effyear) is never true
+# Cohort variables: never-treated states (effyear = NA) receive sentinel values
 dt[, g_cs        := fifelse(is.na(effyear), 0L,  as.integer(effyear))]
 dt[, g_inf       := fifelse(is.na(effyear), Inf, as.numeric(effyear))]
 dt[, first_treat := fifelse(is.na(effyear), Inf, as.numeric(effyear))]
@@ -429,15 +415,9 @@ cat(sprintf("GMM ATT = %.4f  SE = %.4f\n", gmm_res$att, gmm_res$se))
 # ===========================================================================
 
 # Paper targets — fill in from Cheng & Hoekstra (2013) replication table
-if (PANEL == "A") {
-  paper_att  <- rep(NA_real_, 6)   # TODO: fill in Panel A targets
-  paper_se   <- rep(NA_real_, 6)
-  panel_desc <- sprintf("Panel A (%d states, %d obs)", dt[, uniqueN(sid)], nrow(dt))
-} else {
-  paper_att  <- rep(NA_real_, 6)   # TODO: fill in Panel B targets
-  paper_se   <- rep(NA_real_, 6)
-  panel_desc <- sprintf("Panel B (%d states, %d obs)", dt[, uniqueN(sid)], nrow(dt))
-}
+paper_att  <- rep(NA_real_, 6)   # TODO: fill in paper targets
+paper_se   <- rep(NA_real_, 6)
+panel_desc <- sprintf("Full Sample (%d states, %d obs)", dt[, uniqueN(sid)], nrow(dt))
 
 est_names <- c("Pooled TWFE", "CS", "Sun-Abraham", "Gardner",
                "Flex TWFE", "GMM Efficient")
