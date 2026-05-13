@@ -1,5 +1,5 @@
 ###############################################################################
-# Beck et al. (2010) Replication — Panel A (Full Sample, 49 States)
+# Beck et al. (2010) Replication — Panel A / Panel B
 #
 # Source: Beck, T., Levine, R., & Levkov, A. (2010). Big Bad Banks? The Winners
 #   and Losers from Bank Deregulation in the United States. Journal of Finance.
@@ -14,6 +14,11 @@
 #     SA / Flex -> g_inf = Inf  (coded as never-treated reference)
 #     Gardner   -> first_treat = Inf (contributes to first-stage FE as control)
 #     GMM       -> g_idx = 0   (excluded from estimation entirely)
+#
+# Panel B: 37 U.S. states, 1976-2006, 1,147 state-year obs
+#   Always-treated states dropped before any estimation.
+#   All cohort variables take the actual reform year (no sentinel values).
+#   GMM subset is identical to Panel A (always-treated were already excluded).
 #
 # Estimators (Table 6, Panel A targets):
 #   1. Pooled TWFE           -0.0213  (0.0076)
@@ -31,17 +36,29 @@ library(did2s)
 library(MASS)
 library(Matrix)
 
+# ===========================================================================
+# PANEL SELECTION  ← change this before running
+#   "A" — full sample : 49 states, 1,519 obs  (12 always-treated included)
+#   "B" — restricted  : 37 states, 1,147 obs  (always-treated dropped)
+# ===========================================================================
+PANEL <- "A"
+
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 dt <- fread("panel_A_beck_replication (1).csv")
 
-cat(sprintf("Panel A: %d obs, %d states, %d years\n",
-            nrow(dt), dt[, uniqueN(state)], dt[, uniqueN(wrkyr)]))
-
 first_yr <- min(dt$wrkyr)   # 1976
 
-# Cohort variables — always-treated states have branch_reform < 1976
+# Panel B: drop the 12 states that deregulated before the sample window
+if (PANEL == "B") dt <- dt[branch_reform >= first_yr]
+
+cat(sprintf("Panel %s: %d obs, %d states, %d years\n",
+            PANEL, nrow(dt), dt[, uniqueN(state)], dt[, uniqueN(wrkyr)]))
+
+# Cohort variables
+# Panel A: always-treated states receive sentinel values used by each estimator
+# Panel B: no always-treated remain so branch_reform < first_yr is never true
 dt[, g_cs        := fifelse(branch_reform < first_yr, 0L,  as.integer(branch_reform))]
 dt[, g_inf       := fifelse(branch_reform < first_yr, Inf, as.numeric(branch_reform))]
 dt[, first_treat := fifelse(branch_reform < first_yr, Inf, as.numeric(branch_reform))]
@@ -410,8 +427,17 @@ cat(sprintf("GMM ATT = %.4f  SE = %.4f\n", gmm_res$att, gmm_res$se))
 # ===========================================================================
 # Summary table
 # ===========================================================================
-paper_att <- c(-0.0213, -0.0101, -0.0354,  0.0195, -0.0165,  0.0002)
-paper_se  <- c( 0.0076,  0.0078,  0.0114,  0.0067,  0.0141,  0.0141)
+
+# Paper targets — Panel A from Table 6; fill in Panel B values once available
+if (PANEL == "A") {
+  paper_att  <- c(-0.0213, -0.0101, -0.0354,  0.0195, -0.0165,  0.0002)
+  paper_se   <- c( 0.0076,  0.0078,  0.0114,  0.0067,  0.0141,  0.0141)
+  panel_desc <- "Panel A (49 states, 1,519 obs)"
+} else {
+  paper_att  <- rep(NA_real_, 6)   # TODO: fill in from Table 6 Panel B
+  paper_se   <- rep(NA_real_, 6)
+  panel_desc <- "Panel B (37 states, 1,147 obs)"
+}
 
 est_names <- c("Pooled TWFE", "CS", "Sun-Abraham", "Gardner",
                "Flex TWFE", "GMM Efficient")
@@ -434,15 +460,18 @@ se_vals <- c(
 
 cat("\n")
 cat("=================================================================\n")
-cat("  Table 6 Replication — Panel A (49 states, 1,519 obs)\n")
+cat(sprintf("  Table 6 Replication — %s\n", panel_desc))
 cat("  Outcome: ln(Gini)  |  Treatment: D_branch  |  SE by state\n")
 cat("=================================================================\n")
 cat(sprintf("  %-14s  %9s  %9s  %9s  %9s\n",
             "Estimator", "ATT", "SE", "Paper ATT", "Paper SE"))
 cat("  ", paste(rep("-", 58), collapse = ""), "\n", sep = "")
 for (i in seq_along(est_names)) {
-  cat(sprintf("  %-14s  %9.4f  %9.4f  %9.4f  %9.4f\n",
-              est_names[i], att_vals[i], se_vals[i],
-              paper_att[i], paper_se[i]))
+  att_str   <- sprintf("%9.4f", att_vals[i])
+  se_str    <- sprintf("%9.4f", se_vals[i])
+  p_att_str <- if (is.na(paper_att[i])) "       NA" else sprintf("%9.4f", paper_att[i])
+  p_se_str  <- if (is.na(paper_se[i]))  "       NA" else sprintf("%9.4f", paper_se[i])
+  cat(sprintf("  %-14s  %s  %s  %s  %s\n",
+              est_names[i], att_str, se_str, p_att_str, p_se_str))
 }
 cat("\n")
