@@ -3,27 +3,41 @@
 #
 # Question: Is extended Gardner — Gardner with forbidden comparisons included
 # (debiased via Q_H, A = I) — more efficient than original Gardner?
-# Theory says YES even under spherical errors, since every valid moment
-# condition weakly improves efficiency of the GMM with A = I.
+# And: can a spherical-errors-optimal A on clean DiDs beat equal weighting?
 #
-# Four estimators compared:
+# Five estimators compared:
 #   1. Gardner     : Two-stage feols (stage 1 on untreated, stage 2 averages
 #                    residuals per cohort×time). Standard Gardner estimator.
 #   2. EqWt_Clean  : GMM with A = I restricted to clean DiDs only.
 #                    hat_beta = (Q_clean'Q_clean)^{-1} Q_clean' Delta_clean.
 #                    NOTE: differs from Gardner due to cross-CATT coupling in
 #                    Gardner's joint FE regression (paper Section 3c).
-#   3. EqWt_All    : GMM with A = I over ALL DiDs (clean + forbidden).
+#   3. Sph_Clean   : Optimal GMM on clean DiDs under spherical (iid) panel
+#                    errors.  A = pinv(Omega_clean) where Omega_clean is the
+#                    analytically-computed covariance of clean DiDs under iid
+#                    errors. Efficient among all clean-DiD-only estimators.
+#                    Accounts for DiD-level correlations (shared cohort-time
+#                    cells) without requiring any data-based error estimation.
+#   4. EqWt_All    : GMM with A = I over ALL DiDs (clean + forbidden).
 #                    hat_beta = (Q_H'Q_H)^{-1} Q_H' Delta_all.
 #                    Forbidden moments are unbiased via Q_H off-diagonals.
 #                    This is "Extended Gardner": adds forbidden comparisons.
-#   4. Opt_All     : Optimal GMM: A = hat_Omega_phi^{-1} over ALL DiDs.
-#                    Efficient under the full covariance structure.
+#   5. Opt_All     : Optimal GMM: A = pinv(Omega_phi) over ALL DiDs.
+#                    Efficient among all linear unbiased estimators under iid.
 #
-# Efficiency comparison (variance ratios):
-#   EqWt_Clean vs EqWt_All  — pure gain from forbidden comparisons (A = I)
-#   Gardner    vs EqWt_All  — gain from forbidden comparisons vs actual Gardner
-#   EqWt_All   vs Opt_All   — residual gain from optimal vs equal weighting
+# 2x2 table of (DiD set) x (A matrix):
+#   Clean / A=I         => EqWt_Clean
+#   Clean / A=Omega^+   => Sph_Clean   [NEW]
+#   All   / A=I         => EqWt_All
+#   All   / A=Omega^+   => Opt_All
+#
+# Key efficiency comparisons (variance ratios, ratio > 1 means denominator
+# estimator is more efficient):
+#   EqWt_Clean / Sph_Clean — gain from optimal weighting within clean DiDs
+#   EqWt_Clean / EqWt_All  — gain from adding forbidden DiDs (A=I fixed)
+#   Sph_Clean  / Opt_All   — marginal cost of excluding forbidden DiDs
+#                            when both use the spherical-optimal A
+#   EqWt_All   / Opt_All   — gain from optimal vs equal weighting (all DiDs)
 #
 # DGP: Y_it = alpha_i + lambda_t + tau_it + eps_it,  eps_it ~ iid N(0,1)
 # Design: 3 cohorts (g = 4, 7, 10), T = 12, 10 units/cohort + 10 never-treated
@@ -216,7 +230,18 @@ Omega_phi <- build_Omega_phi(sigma2 = sigma_eps^2)
 AVar_clean <- L_clean %*% Omega_phi[clean_idx, clean_idx] %*% t(L_clean)
 AVar_all   <- L_all   %*% Omega_phi                       %*% t(L_all)
 
-# Optimal GMM: A = Omega_phi^+ (Moore-Penrose pseudoinverse).
+# Sph_Clean: A = pinv(Omega_clean) — optimal GMM on clean DiDs under iid errors.
+# Omega_clean is the submatrix of Omega_phi for clean DiDs only.
+# pinv(Omega_clean) != submatrix of pinv(Omega_phi): genuinely different from Opt_All.
+# This A is design-based: determined entirely by panel structure, no data estimation.
+Omega_clean    <- Omega_phi[clean_idx, clean_idx]
+Omega_cl_pinv  <- ginv(Omega_clean)
+QcOQc          <- t(Q_clean) %*% Omega_cl_pinv %*% Q_clean   # n_catt x n_catt (full rank)
+L_sph_clean    <- solve(QcOQc) %*% t(Q_clean) %*% Omega_cl_pinv
+AVar_sph_clean <- L_sph_clean %*% Omega_clean %*% t(L_sph_clean)
+stopifnot(max(abs(L_sph_clean %*% Q_clean - diag(n_catt))) < 1e-8)
+
+# Opt_All: A = Omega_phi^+ (Moore-Penrose pseudoinverse).
 # The pseudoinverse is well-defined on the column space of Q_H.
 Omega_pinv <- ginv(Omega_phi)
 QhOQh      <- t(Q_H) %*% Omega_pinv %*% Q_H
@@ -263,10 +288,11 @@ estimate_gardner <- function(dt_sim) {
 
 n_sims <- 100L
 
-res_gard  <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
-res_clean <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
-res_all   <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
-res_opt   <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
+res_gard      <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
+res_clean     <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
+res_sph_clean <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
+res_all       <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
+res_opt       <- matrix(NA_real_, nrow = n_sims, ncol = n_catt)
 
 cat(sprintf("Running %d simulations...\n", n_sims))
 set.seed(2025)
@@ -293,10 +319,11 @@ for (sim in seq_len(n_sims)) {
   if (anyNA(Delta_all)) next
   Delta_clean <- Delta_all[clean_idx]
 
-  # EqWt_Clean, EqWt_All, Opt_All
-  res_clean[sim, ] <- as.vector(L_clean  %*% Delta_clean)
-  res_all[sim, ]   <- as.vector(L_all    %*% Delta_all)
-  res_opt[sim, ]   <- as.vector(L_opt    %*% Delta_all)
+  # EqWt_Clean, Sph_Clean, EqWt_All, Opt_All
+  res_clean[sim, ]     <- as.vector(L_clean     %*% Delta_clean)
+  res_sph_clean[sim, ] <- as.vector(L_sph_clean %*% Delta_clean)
+  res_all[sim, ]       <- as.vector(L_all       %*% Delta_all)
+  res_opt[sim, ]       <- as.vector(L_opt       %*% Delta_all)
 
   if (sim %% 20L == 0L) cat(sprintf("  sim %d / %d\n", sim, n_sims))
 }
@@ -316,14 +343,18 @@ n_post      <- sapply(treat_times, function(g) sum(catt_df$g == g))
 wts         <- n_post / sum(n_post)
 true_overall <- sum(true_cohort * wts)
 
-ca_gard  <- agg_cohort(res_gard)
-ca_clean <- agg_cohort(res_clean)
-ca_all   <- agg_cohort(res_all)
-ca_opt   <- agg_cohort(res_opt)
+ca_gard      <- agg_cohort(res_gard)
+ca_clean     <- agg_cohort(res_clean)
+ca_sph_clean <- agg_cohort(res_sph_clean)
+ca_all       <- agg_cohort(res_all)
+ca_opt       <- agg_cohort(res_opt)
 
 oa <- function(ca) as.vector(ca %*% wts)
-oa_gard  <- oa(ca_gard);  oa_clean <- oa(ca_clean)
-oa_all   <- oa(ca_all);   oa_opt   <- oa(ca_opt)
+oa_gard      <- oa(ca_gard)
+oa_clean     <- oa(ca_clean)
+oa_sph_clean <- oa(ca_sph_clean)
+oa_all       <- oa(ca_all)
+oa_opt       <- oa(ca_opt)
 
 # Analytical cohort-level variances (diagonal of AVar summed/averaged per cohort)
 agg_avar <- function(AV) {
@@ -333,15 +364,17 @@ agg_avar <- function(AV) {
   })
 }
 
-av_clean_c <- agg_avar(AVar_clean)
-av_all_c   <- agg_avar(AVar_all)
-av_opt_c   <- agg_avar(AVar_opt)
+av_clean_c     <- agg_avar(AVar_clean)
+av_sph_clean_c <- agg_avar(AVar_sph_clean)
+av_all_c       <- agg_avar(AVar_all)
+av_opt_c       <- agg_avar(AVar_opt)
 
 # Overall ATT aggregation weights at CATT level: equal weight 1/n_catt
 c_oa <- rep(1.0 / n_catt, n_catt)
-av_clean_oa <- as.numeric(t(c_oa) %*% AVar_clean %*% c_oa)
-av_all_oa   <- as.numeric(t(c_oa) %*% AVar_all   %*% c_oa)
-av_opt_oa   <- as.numeric(t(c_oa) %*% AVar_opt   %*% c_oa)
+av_clean_oa     <- as.numeric(t(c_oa) %*% AVar_clean     %*% c_oa)
+av_sph_clean_oa <- as.numeric(t(c_oa) %*% AVar_sph_clean %*% c_oa)
+av_all_oa       <- as.numeric(t(c_oa) %*% AVar_all       %*% c_oa)
+av_opt_oa       <- as.numeric(t(c_oa) %*% AVar_opt       %*% c_oa)
 
 # ===========================================================================
 # 10. Print results
@@ -374,96 +407,112 @@ for (ci in seq_along(treat_times)) {
 cat(SEP, "\n", sep = "")
 
 cat("\n", SEP2, "\n", sep = "")
-cat("TABLE 2: BIAS — all four estimators (should all be ~0 under parallel trends)\n")
+cat("TABLE 2: BIAS — all five estimators (should all be ~0 under parallel trends)\n")
 cat(SEP2, "\n", sep = "")
-cat(sprintf("%-16s  %8s  %10s  %12s  %12s  %12s\n",
-            "CATT", "True", "Gardner", "EqWt_Clean", "EqWt_All", "Opt_All"))
+cat(sprintf("%-16s  %8s  %10s  %12s  %12s  %12s  %12s\n",
+            "CATT", "True", "Gardner", "EqWt_Clean", "Sph_Clean", "EqWt_All", "Opt_All"))
 cat(SEP, "\n", sep = "")
 for (ci in seq_along(treat_times)) {
   g  <- treat_times[ci]; tv <- true_cohort[ci]
-  cat(sprintf("ATT(g=%2d, avg)  %8.4f  %+10.6f  %+12.6f  %+12.6f  %+12.6f\n",
+  cat(sprintf("ATT(g=%2d, avg)  %8.4f  %+10.6f  %+12.6f  %+12.6f  %+12.6f  %+12.6f\n",
               g, tv,
-              mean(ca_gard[,ci],  na.rm=TRUE) - tv,
-              mean(ca_clean[,ci], na.rm=TRUE) - tv,
-              mean(ca_all[,ci],   na.rm=TRUE) - tv,
-              mean(ca_opt[,ci],   na.rm=TRUE) - tv))
+              mean(ca_gard[,ci],      na.rm=TRUE) - tv,
+              mean(ca_clean[,ci],     na.rm=TRUE) - tv,
+              mean(ca_sph_clean[,ci], na.rm=TRUE) - tv,
+              mean(ca_all[,ci],       na.rm=TRUE) - tv,
+              mean(ca_opt[,ci],       na.rm=TRUE) - tv))
 }
 cat(SEP, "\n", sep = "")
-cat(sprintf("%-16s  %8.4f  %+10.6f  %+12.6f  %+12.6f  %+12.6f\n",
+cat(sprintf("%-16s  %8.4f  %+10.6f  %+12.6f  %+12.6f  %+12.6f  %+12.6f\n",
             "Overall ATT", true_overall,
-            mean(oa_gard,  na.rm=TRUE) - true_overall,
-            mean(oa_clean, na.rm=TRUE) - true_overall,
-            mean(oa_all,   na.rm=TRUE) - true_overall,
-            mean(oa_opt,   na.rm=TRUE) - true_overall))
+            mean(oa_gard,      na.rm=TRUE) - true_overall,
+            mean(oa_clean,     na.rm=TRUE) - true_overall,
+            mean(oa_sph_clean, na.rm=TRUE) - true_overall,
+            mean(oa_all,       na.rm=TRUE) - true_overall,
+            mean(oa_opt,       na.rm=TRUE) - true_overall))
 
 cat("\n", SEP2, "\n", sep = "")
 cat("TABLE 3: VARIANCE — empirical (100 sims) and analytical (sandwich formula)\n")
-cat("  Key comparison: EqWt_Clean vs EqWt_All shows pure gain from forbidden\n")
-cat("  comparisons holding A = I fixed.  Ratio > 1 means EqWt_All more efficient.\n")
+cat("  Sph_Clean uses A = pinv(Omega_clean): optimal weighting within clean DiDs.\n")
+cat("  Ratio > 1 means denominator estimator is more efficient.\n")
+cat("  Columns: [ratio] = Clean(th) / that column's analytical variance.\n")
 cat(SEP2, "\n", sep = "")
-cat(sprintf("%-16s  %-10s  %-10s  %-10s  %-10s  %-10s  %-10s\n",
-            "", "Gard(emp)", "Clean(emp)", "All(emp)", "Clean(th)", "All(th)", "Opt(th)"))
-cat(sprintf("%-16s  %-10s  %-10s  %-10s  %-10s  %-10s  %-10s\n",
-            "CATT", "var", "var", "var [ratio]", "var", "var [ratio]", "var [ratio]"))
+cat(sprintf("%-16s  %-9s  %-9s  %-12s  %-12s  %-9s  %-12s  %-12s\n",
+            "CATT",
+            "Grd(emp)", "Cln(emp)", "Sph_Cln(emp)", "All(emp)",
+            "Cln(th)", "SphCln(th)", "Opt(th)"))
 cat(SEP, "\n", sep = "")
 for (ci in seq_along(treat_times)) {
-  g     <- treat_times[ci]
-  vg    <- var(ca_gard[, ci],  na.rm = TRUE)
-  vc    <- var(ca_clean[, ci], na.rm = TRUE)
-  va    <- var(ca_all[, ci],   na.rm = TRUE)
-  th_c  <- av_clean_c[ci]
-  th_a  <- av_all_c[ci]
-  th_o  <- av_opt_c[ci]
-  cat(sprintf("ATT(g=%2d, avg)  %10.5f  %10.5f  %10.5f[%5.3f]  %10.5f  %10.5f[%5.3f]  %10.5f[%5.3f]\n",
-              g, vg, vc, va, vc/va, th_c, th_a, th_c/th_a, th_o, th_c/th_o))
+  g      <- treat_times[ci]
+  vg     <- var(ca_gard[, ci],      na.rm = TRUE)
+  vc     <- var(ca_clean[, ci],     na.rm = TRUE)
+  vsc    <- var(ca_sph_clean[, ci], na.rm = TRUE)
+  va     <- var(ca_all[, ci],       na.rm = TRUE)
+  th_c   <- av_clean_c[ci]
+  th_sc  <- av_sph_clean_c[ci]
+  th_o   <- av_opt_c[ci]
+  cat(sprintf(
+    "ATT(g=%2d, avg)  %9.5f  %9.5f  %12.5f  %12.5f  %9.5f  %10.5f[%5.3f]  %10.5f[%5.3f]\n",
+    g, vg, vc, vsc, va, th_c, th_sc, th_c/th_sc, th_o, th_c/th_o))
 }
 cat(SEP, "\n", sep = "")
-vg_o <- var(oa_gard, na.rm=TRUE); vc_o <- var(oa_clean, na.rm=TRUE)
-va_o <- var(oa_all,  na.rm=TRUE)
-cat(sprintf("%-16s  %10.5f  %10.5f  %10.5f[%5.3f]  %10.5f  %10.5f[%5.3f]  %10.5f[%5.3f]\n",
-            "Overall ATT", vg_o, vc_o, va_o, vc_o/va_o,
-            av_clean_oa, av_all_oa, av_clean_oa/av_all_oa,
-            av_opt_oa, av_clean_oa/av_opt_oa))
+vg_o  <- var(oa_gard,      na.rm = TRUE)
+vc_o  <- var(oa_clean,     na.rm = TRUE)
+vsc_o <- var(oa_sph_clean, na.rm = TRUE)
+va_o  <- var(oa_all,       na.rm = TRUE)
+cat(sprintf(
+  "%-16s  %9.5f  %9.5f  %12.5f  %12.5f  %9.5f  %10.5f[%5.3f]  %10.5f[%5.3f]\n",
+  "Overall ATT", vg_o, vc_o, vsc_o, va_o,
+  av_clean_oa, av_sph_clean_oa, av_clean_oa/av_sph_clean_oa,
+  av_opt_oa, av_clean_oa/av_opt_oa))
 
 cat("\n", SEP2, "\n", sep = "")
 cat("TABLE 4: ANALYTICAL VARIANCE RATIOS (exact under iid errors)\n")
-cat("  Clean/All = efficiency gain from adding forbidden comparisons (A=I)\n")
-cat("  Clean/Opt = total efficiency gain from forbidden + optimal weighting\n")
-cat("  All/Opt   = residual gain from optimal weighting given forbidden included\n")
+cat("  Ratio > 1 means numerator estimator has HIGHER variance (denominator more efficient).\n")
+cat("  Clean/SphCln = gain from optimal A within clean DiDs (Sph_Clean over EqWt_Clean)\n")
+cat("  Clean/All    = gain from adding forbidden DiDs (A=I fixed)\n")
+cat("  SphCln/Opt   = marginal gain from adding forbidden DiDs, both using Omega^+ weighting\n")
+cat("  Clean/Opt    = total gain from both optimal weighting AND forbidden DiDs\n")
 cat(SEP2, "\n", sep = "")
-cat(sprintf("%-22s  %14s  %14s  %14s\n",
-            "CATT (horizon k=0)", "Clean/All", "Clean/Opt", "All/Opt"))
+cat(sprintf("%-24s  %14s  %14s  %14s  %14s\n",
+            "CATT", "Clean/SphCln", "Clean/All", "SphCln/Opt", "Clean/Opt"))
 cat(SEP, "\n", sep = "")
-for (ci in seq_along(treat_times)) {
-  g   <- treat_times[ci]
-  k0  <- which(catt_df$g == g & catt_df$t == g)
-  c_a <- AVar_clean[k0, k0] / AVar_all[k0, k0]
-  c_o <- AVar_clean[k0, k0] / AVar_opt[k0, k0]
-  a_o <- AVar_all[k0, k0]   / AVar_opt[k0, k0]
-  cat(sprintf("ATT(g=%2d, t=%2d)  k=0    %14.4f  %14.4f  %14.4f\n",
-              g, g, c_a, c_o, a_o))
+
+print_ratios <- function(k, g, label) {
+  c_sc <- AVar_clean[k, k]     / AVar_sph_clean[k, k]
+  c_a  <- AVar_clean[k, k]     / AVar_all[k, k]
+  sc_o <- AVar_sph_clean[k, k] / AVar_opt[k, k]
+  c_o  <- AVar_clean[k, k]     / AVar_opt[k, k]
+  cat(sprintf("%-24s  %14.4f  %14.4f  %14.4f  %14.4f\n",
+              label, c_sc, c_a, sc_o, c_o))
 }
-# Final post-treatment period
+
 for (ci in seq_along(treat_times)) {
-  g    <- treat_times[ci]
+  g  <- treat_times[ci]
+  k0 <- which(catt_df$g == g & catt_df$t == g)
+  print_ratios(k0, g, sprintf("ATT(g=%2d, t=%2d) k=0", g, g))
+}
+for (ci in seq_along(treat_times)) {
+  g      <- treat_times[ci]
   k_last <- which(catt_df$g == g & catt_df$t == T_total)
-  c_a <- AVar_clean[k_last, k_last] / AVar_all[k_last, k_last]
-  c_o <- AVar_clean[k_last, k_last] / AVar_opt[k_last, k_last]
-  a_o <- AVar_all[k_last, k_last]   / AVar_opt[k_last, k_last]
-  cat(sprintf("ATT(g=%2d, t=%2d) k=%2d    %14.4f  %14.4f  %14.4f\n",
-              g, T_total, T_total - g, c_a, c_o, a_o))
+  print_ratios(k_last, g, sprintf("ATT(g=%2d, t=%2d) k=%2d", g, T_total, T_total - g))
 }
 cat(SEP, "\n", sep = "")
-# Overall ATT
-c_a_oa <- av_clean_oa / av_all_oa
-c_o_oa <- av_clean_oa / av_opt_oa
-a_o_oa <- av_all_oa   / av_opt_oa
-cat(sprintf("%-22s  %14.4f  %14.4f  %14.4f\n",
-            "Overall ATT", c_a_oa, c_o_oa, a_o_oa))
+
+# Overall ATT ratios
+c_sc_oa <- av_clean_oa     / av_sph_clean_oa
+c_a_oa  <- av_clean_oa     / av_all_oa
+sc_o_oa <- av_sph_clean_oa / av_opt_oa
+c_o_oa  <- av_clean_oa     / av_opt_oa
+cat(sprintf("%-24s  %14.4f  %14.4f  %14.4f  %14.4f\n",
+            "Overall ATT", c_sc_oa, c_a_oa, sc_o_oa, c_o_oa))
 cat(SEP2, "\n", sep = "")
 
 cat("\nSummary:\n")
-cat("  Forbidden comparisons alone (Clean -> All, ratio > 1) give modest\n")
-cat("  efficiency gains under iid errors. The dominant efficiency gain comes\n")
-cat("  from optimal weighting (All -> Opt), especially at early horizons\n")
-cat("  where cross-DiD covariances are largest.\n")
+cat("  Clean/SphCln: gain from optimal weighting within clean DiDs.\n")
+cat("    At k=0, exchangeable covariance => EqWt_Clean is already optimal => ratio = 1.\n")
+cat("    At later horizons, Sph_Clean improves over EqWt_Clean.\n")
+cat("  Clean/All: adding forbidden DiDs with A=I can hurt at k=0 (ratio < 1)\n")
+cat("    because positive cross-DiD correlation at k=0 makes equal-weighting suboptimal.\n")
+cat("  SphCln/Opt: marginal value of forbidden DiDs given optimal A.\n")
+cat("    Shows whether forbidden DiDs add independent information beyond clean DiDs.\n")
