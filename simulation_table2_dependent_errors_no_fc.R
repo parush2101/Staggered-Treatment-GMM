@@ -19,8 +19,13 @@
 #  10. GMM_Eff_HetCov: GMM over all DiDs with cohort-specific sigma (unit-level)
 #                      and non-zero symmetric cross-cohort gamma (no regularization;
 #                      Assumption 1 relaxed)
+#  11. GLS_Eq15:       Direct GLS on eq (15): Delta = Q_H*beta + eps, Var[eps]=Omega_phi
+#                      beta_hat = (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta
+#                      Algebraically identical to GMM_Eff (paper p.11); included to
+#                      verify the equivalence numerically.
 #
-# CATTs saved for: Flex_TWFE, GMM_Clean, GMM_Eff, GMM_Eff_HetVar, GMM_Eff_HetCov
+# CATTs saved for: Flex_TWFE, GMM_Clean, GMM_Eff, GMM_Eff_HetVar, GMM_Eff_HetCov,
+#                  GLS_Eq15
 #
 # Key optimization: panel structure (Q_H, Q_clean, C_mat, lag indices) is
 # pre-computed once before the simulation loop.
@@ -553,6 +558,60 @@ gmm_efficient_hetcov <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
 }
 
 # ===========================================================================
+# 6d. GLS_Eq15: Direct GLS on the moment system (paper eq. 15)
+#     The system is Delta = Q_H * beta + xi,  Var[xi] = Omega_phi.
+#     GLS minimises (Delta - Q_H*beta)' Omega_phi^{-1} (Delta - Q_H*beta),
+#     giving beta_hat = (Q_H' Omega_phi^{-1} Q_H)^{-1} Q_H' Omega_phi^{-1} Delta.
+#     This is algebraically identical to GMM_Eff with A = Omega_phi^{-1}
+#     (paper Section 3.3.2, p.11). Included to verify numerical equivalence.
+# ===========================================================================
+
+gmm_gls_eq15 <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
+  beta_hat <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
+
+  dt_r <- copy(dt)
+  setorder(dt_r, unit, time)
+
+  for (iter in 1:max_iter) {
+    beta_old <- beta_hat
+
+    dt_r[, tau_hat := 0]
+    for (ci in 1:n_catt) {
+      dt_r[g == catt_list[[ci]][1] & time == catt_list[[ci]][2],
+           tau_hat := beta_hat[ci]]
+    }
+    dt_r[, Y_adj := Y - tau_hat]
+
+    resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
+                        nrow = T_total, ncol = N_total)
+
+    sigma_d <- numeric(T_total)
+    for (d in 0:(T_total - 1)) {
+      r1 <- 1:(T_total - d); r2 <- (1 + d):T_total
+      sigma_d[d + 1] <- sum(resid_mat[r1, ] * resid_mat[r2, ]) / (N_total * (T_total - d))
+    }
+
+    S_vec     <- sigma_d[pp_v + 1] - sigma_d[pr_v + 1] - sigma_d[rp_v + 1] + sigma_d[rr_v + 1]
+    Omega_phi <- C_mat * matrix(S_vec, nrow = n_did)
+    Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
+    diag(Omega_phi) <- diag(Omega_phi) + 1e-6
+
+    # GLS closed form: (Q_H' Omega^{-1} Q_H)^{-1} Q_H' Omega^{-1} Delta
+    OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
+    if (is.null(OQ)) break
+    OD <- solve(Omega_phi, Delta)
+
+    QtOQ <- crossprod(Q_H, OQ)   # Q_H' Omega^{-1} Q_H
+    QtOD <- crossprod(Q_H, OD)   # Q_H' Omega^{-1} Delta
+    beta_hat <- as.numeric(tryCatch(solve(QtOQ, QtOD), error = function(e) beta_old))
+
+    if (max(abs(beta_hat - beta_old)) < tol) break
+  }
+
+  list(att = mean(beta_hat), catt = beta_hat)
+}
+
+# ===========================================================================
 # 7. Package-based Estimators (scalar ATT only)
 # ===========================================================================
 
@@ -672,13 +731,15 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
 
   est_names <- c("TWFE", "CS", "SA", "Gardner",
                  "Flex_TWFE", "Flex_TWFE_FGLS",
-                 "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
+                 "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov",
+                 "GLS_Eq15")
   n_est <- length(est_names)
   results <- data.table(sim = integer())
   for (nm in est_names) results[, (nm) := numeric()]
 
   # CATT storage matrices (n_sims × n_catt)
-  catt_est  <- c("Flex_TWFE", "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
+  catt_est  <- c("Flex_TWFE", "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov",
+                 "GLS_Eq15")
   catt_mats <- setNames(
     lapply(catt_est, function(x) matrix(NA_real_, nrow = n_sims, ncol = n_catt)),
     catt_est
@@ -704,6 +765,8 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
                               error = function(e) list(att = NA_real_, catt = na_catt))
     gmm_hc_res   <- tryCatch(gmm_efficient_hetcov(Delta, dt),
                               error = function(e) list(att = NA_real_, catt = na_catt))
+    gls_eq15_res <- tryCatch(gmm_gls_eq15(Delta, dt),
+                              error = function(e) list(att = NA_real_, catt = na_catt))
     flex_res     <- estimate_flex_twfe(dt)
     flex_fgls_res <- estimate_flex_twfe_fgls(dt)
 
@@ -713,6 +776,7 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
     catt_mats[["GMM_Eff"]][s, ]         <- gmm_eff_res$catt
     catt_mats[["GMM_Eff_HetVar"]][s, ]  <- gmm_hv_res$catt
     catt_mats[["GMM_Eff_HetCov"]][s, ]  <- gmm_hc_res$catt
+    catt_mats[["GLS_Eq15"]][s, ]        <- gls_eq15_res$catt
 
     elapsed <- round(proc.time()[3] - t0_sim, 1)
     cat(sprintf("  Sim %d/%d  (%.1fs)\n", s, n_sims, elapsed))
@@ -723,7 +787,8 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
       Gardner = att_gardner,
       Flex_TWFE = flex_res$att, Flex_TWFE_FGLS = flex_fgls_res$att,
       GMM_Clean = gmm_cl_res$att, GMM_Eff = gmm_eff_res$att,
-      GMM_Eff_HetVar = gmm_hv_res$att, GMM_Eff_HetCov = gmm_hc_res$att
+      GMM_Eff_HetVar = gmm_hv_res$att, GMM_Eff_HetCov = gmm_hc_res$att,
+      GLS_Eq15 = gls_eq15_res$att
     )))
   }
 
@@ -768,12 +833,13 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
 # ===========================================================================
 
 cat("================================================================\n")
-cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 10 estimators\n",
+cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 11 estimators\n",
             N_total, cohort_size, T_total, rho, n_sims))
 cat("  GMM_Clean:      efficient GMM on clean DiDs only\n")
 cat("  GMM_Eff:        efficient GMM on all DiDs (clean + forbidden)\n")
 cat("  GMM_Eff_HetVar: GMM all DiDs, cohort-specific sigma, cross-cov = 0\n")
 cat("  GMM_Eff_HetCov: GMM all DiDs, cohort-specific sigma + cross-cohort gamma\n")
+cat("  GLS_Eq15:       GLS on eq (15); algebraically identical to GMM_Eff\n")
 cat("================================================================\n")
 
 beta_hom <- rep(-5, n_cohorts); r_hom <- rep(0, n_cohorts)
@@ -795,6 +861,7 @@ cat("  GMM_Clean:      A=Omega_clean^{-1} restricted to clean DiDs\n")
 cat("  GMM_Eff:        A=Omega_phi^{-1} over all DiDs (homogeneous sigma)\n")
 cat("  GMM_Eff_HetVar: A=Omega_phi^{-1}, cohort-specific sigma, cross-cov=0\n")
 cat("  GMM_Eff_HetCov: A=Omega_phi^{-1}, cohort-specific sigma + cross-cohort gamma\n")
+cat("  GLS_Eq15:       GLS on eq(15); point estimate == GMM_Eff by construction\n")
 cat("  Flex_TWFE_FGLS: Iterated feasible GLS exploiting AR(1)\n")
 cat("==========================================================================\n\n")
 
@@ -805,7 +872,8 @@ table2 <- merge(
 )
 est_order <- c("TWFE", "CS", "SA", "Gardner",
                "Flex_TWFE", "Flex_TWFE_FGLS",
-               "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
+               "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov",
+               "GLS_Eq15")
 table2 <- table2[match(est_order, table2$Estimator)]
 
 cat(sprintf("%-16s  %12s  %12s  %12s  %12s\n",
@@ -887,3 +955,11 @@ gain_hetcov_vs_clean <- -100 * diff_hetcov_clean / den_clean
 cat(sprintf("\nMean %% gain GMM_Eff over GMM_Clean:        %.2f%%\n", mean(gain_eff_vs_clean)))
 cat(sprintf("Mean %% gain GMM_Eff_HetVar over GMM_Clean: %.2f%%\n", mean(gain_hetvar_vs_clean)))
 cat(sprintf("Mean %% gain GMM_Eff_HetCov over GMM_Clean: %.2f%%\n", mean(gain_hetcov_vs_clean)))
+
+## Verify GLS_Eq15 == GMM_Eff (paper Section 3.3.2)
+max_diff_hom <- max(abs(res_hom$results$GLS_Eq15 - res_hom$results$GMM_Eff), na.rm = TRUE)
+max_diff_het <- max(abs(res_het$results$GLS_Eq15 - res_het$results$GMM_Eff), na.rm = TRUE)
+cat(sprintf("\n=== Equivalence check: GLS_Eq15 vs GMM_Eff ===\n"))
+cat(sprintf("  Max |GLS_Eq15 - GMM_Eff| (Homogeneous): %.2e\n", max_diff_hom))
+cat(sprintf("  Max |GLS_Eq15 - GMM_Eff| (Heterogeneous): %.2e\n", max_diff_het))
+cat("  (Should be at machine precision ~1e-12 if equivalence holds)\n")
