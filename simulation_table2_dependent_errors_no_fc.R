@@ -11,11 +11,16 @@
 #   4. Gardner (did2s)
 #   5. Flex TWFE (Wooldridge 2025)
 #   6. Flex TWFE FGLS (iterated feasible GLS)
-#   7. GMM_Clean: efficient GMM restricted to clean DiDs only
-#                 (A = Omega_clean^{-1}, Omega built from clean DiD subset)
-#   8. GMM_Eff:   efficient GMM over all DiDs (A = Omega_phi^{-1})
+#   7. GMM_Clean:      efficient GMM restricted to clean DiDs only
+#                      (A = Omega_clean^{-1}, Omega built from clean DiD subset)
+#   8. GMM_Eff:        efficient GMM over all DiDs (A = Omega_phi^{-1})
+#   9. GMM_Eff_HetVar: GMM over all DiDs with cohort-specific sigma (unit-level);
+#                      cross-cohort covariances set to zero (Assumption 1 preserved)
+#  10. GMM_Eff_HetCov: GMM over all DiDs with cohort-specific sigma (unit-level)
+#                      and non-zero symmetric cross-cohort gamma (no regularization;
+#                      Assumption 1 relaxed)
 #
-# CATTs saved for: Flex_TWFE, GMM_Clean, GMM_Eff (n_sims × n_catt)
+# CATTs saved for: Flex_TWFE, GMM_Clean, GMM_Eff, GMM_Eff_HetVar, GMM_Eff_HetCov
 #
 # Key optimization: panel structure (Q_H, Q_clean, C_mat, lag indices) is
 # pre-computed once before the simulation loop.
@@ -182,6 +187,19 @@ pp_v_clean <- as.vector(abs(outer(meta_tp_clean, meta_tp_clean, "-")))
 pr_v_clean <- as.vector(abs(outer(meta_tp_clean, meta_tr_clean, "-")))
 rp_v_clean <- as.vector(abs(outer(meta_tr_clean, meta_tp_clean, "-")))
 rr_v_clean <- as.vector(abs(outer(meta_tr_clean, meta_tr_clean, "-")))
+
+# Pre-compute cohort-level bookkeeping for GMM_Eff_HetVar / GMM_Eff_HetCov
+all_cohorts_hv      <- c(0L, sort(as.integer(treatment_times)))
+n_cohort_grp_hv     <- length(all_cohorts_hv)
+N_by_cohort_hv      <- sapply(all_cohorts_hv, get_cohort_size)
+units_by_cohort_hv  <- lapply(all_cohorts_hv, function(g) which(unit_cohort == g))
+active_by_cohort_hv <- lapply(all_cohorts_hv,
+  function(g) which(meta_focal == g | meta_ctrl == g))
+sign_by_cohort_hv   <- lapply(seq_along(all_cohorts_hv), function(gi) {
+  g   <- all_cohorts_hv[gi]
+  idx <- active_by_cohort_hv[[gi]]
+  ifelse(meta_focal[idx] == g, 1L, -1L)
+})
 
 cat("  Pre-computation done.\n\n")
 
@@ -357,6 +375,184 @@ gmm_efficient <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
 }
 
 # ===========================================================================
+# 6b. GMM_Eff_HetVar: Efficient GMM, all DiDs, cohort-specific sigma (unit-level)
+#     Cross-cohort covariances are set to zero (Assumption 1 preserved).
+#     Omega_phi = sum_g  outer(sgn_g, sgn_g) * S_g / N_g
+#     where S_g uses sigma_d estimated from units in cohort g only.
+# ===========================================================================
+
+gmm_efficient_hetvar <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
+  beta_hat <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
+
+  dt_r <- copy(dt)
+  setorder(dt_r, unit, time)
+
+  for (iter in 1:max_iter) {
+    beta_old <- beta_hat
+
+    dt_r[, tau_hat := 0]
+    for (ci in 1:n_catt) {
+      dt_r[g == catt_list[[ci]][1] & time == catt_list[[ci]][2],
+           tau_hat := beta_hat[ci]]
+    }
+    dt_r[, Y_adj := Y - tau_hat]
+
+    resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
+                        nrow = T_total, ncol = N_total)
+
+    Omega_phi <- matrix(0.0, nrow = n_did, ncol = n_did)
+
+    for (gi in seq_along(all_cohorts_hv)) {
+      N_g     <- N_by_cohort_hv[gi]
+      units_g <- units_by_cohort_hv[[gi]]
+      active  <- active_by_cohort_hv[[gi]]
+      if (length(active) == 0L) next
+      sgn <- sign_by_cohort_hv[[gi]]
+
+      rm_g <- resid_mat[, units_g, drop = FALSE]
+      sigma_d_g <- numeric(T_total)
+      for (d in 0L:(T_total - 1L)) {
+        r1 <- 1L:(T_total - d); r2 <- (1L + d):T_total
+        sigma_d_g[d + 1L] <- sum(rm_g[r1, ] * rm_g[r2, ]) / (N_g * (T_total - d))
+      }
+
+      tp_a <- meta_tp[active]; tr_a <- meta_tr[active]
+      pp <- abs(outer(tp_a, tp_a, "-")); pr <- abs(outer(tp_a, tr_a, "-"))
+      rp <- abs(outer(tr_a, tp_a, "-")); rr <- abs(outer(tr_a, tr_a, "-"))
+      S_g <- sigma_d_g[pp + 1L] - sigma_d_g[pr + 1L] -
+             sigma_d_g[rp + 1L] + sigma_d_g[rr + 1L]
+
+      Omega_phi[active, active] <- Omega_phi[active, active] + outer(sgn, sgn) * S_g / N_g
+    }
+
+    Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
+    diag(Omega_phi) <- diag(Omega_phi) + 1e-6
+
+    OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
+    if (is.null(OQ)) break
+    OD <- solve(Omega_phi, Delta)
+
+    QtAQ <- crossprod(Q_H, OQ)
+    QtAD <- crossprod(Q_H, OD)
+    beta_hat <- as.numeric(tryCatch(solve(QtAQ, QtAD), error = function(e) beta_old))
+
+    if (max(abs(beta_hat - beta_old)) < tol) break
+  }
+
+  list(att = mean(beta_hat), catt = beta_hat)
+}
+
+# ===========================================================================
+# 6c. GMM_Eff_HetCov: Efficient GMM, all DiDs, cohort-specific sigma (unit-level)
+#     plus non-zero symmetric cross-cohort gamma (no regularization).
+#     gamma_d^{g,g'} estimated as cohort-mean-level lag-d cross-covariance,
+#     symmetrised: (1/(2(T-d))) * [sum_t bar_e_{g,t}*bar_e_{g',t+d} + reverse].
+# ===========================================================================
+
+gmm_efficient_hetcov <- function(Delta, dt, max_iter = 3, tol = 1e-6) {
+  beta_hat <- as.numeric(QtQ_inv %*% crossprod(Q_H, Delta))
+
+  dt_r <- copy(dt)
+  setorder(dt_r, unit, time)
+
+  for (iter in 1:max_iter) {
+    beta_old <- beta_hat
+
+    dt_r[, tau_hat := 0]
+    for (ci in 1:n_catt) {
+      dt_r[g == catt_list[[ci]][1] & time == catt_list[[ci]][2],
+           tau_hat := beta_hat[ci]]
+    }
+    dt_r[, Y_adj := Y - tau_hat]
+
+    resid_mat <- matrix(residuals(feols(Y_adj ~ 1 | unit + time, data = dt_r)),
+                        nrow = T_total, ncol = N_total)
+
+    # Cohort-mean residuals: T_total x n_cohort_grp_hv
+    bar_e <- matrix(0.0, nrow = T_total, ncol = n_cohort_grp_hv)
+    for (gi in seq_along(all_cohorts_hv)) {
+      units_g <- units_by_cohort_hv[[gi]]
+      bar_e[, gi] <- rowMeans(resid_mat[, units_g, drop = FALSE])
+    }
+
+    Omega_phi <- matrix(0.0, nrow = n_did, ncol = n_did)
+
+    # Within-cohort contributions (identical to HetVar)
+    for (gi in seq_along(all_cohorts_hv)) {
+      N_g     <- N_by_cohort_hv[gi]
+      units_g <- units_by_cohort_hv[[gi]]
+      active  <- active_by_cohort_hv[[gi]]
+      if (length(active) == 0L) next
+      sgn <- sign_by_cohort_hv[[gi]]
+
+      rm_g <- resid_mat[, units_g, drop = FALSE]
+      sigma_d_g <- numeric(T_total)
+      for (d in 0L:(T_total - 1L)) {
+        r1 <- 1L:(T_total - d); r2 <- (1L + d):T_total
+        sigma_d_g[d + 1L] <- sum(rm_g[r1, ] * rm_g[r2, ]) / (N_g * (T_total - d))
+      }
+
+      tp_a <- meta_tp[active]; tr_a <- meta_tr[active]
+      pp <- abs(outer(tp_a, tp_a, "-")); pr <- abs(outer(tp_a, tr_a, "-"))
+      rp <- abs(outer(tr_a, tp_a, "-")); rr <- abs(outer(tr_a, tr_a, "-"))
+      S_g <- sigma_d_g[pp + 1L] - sigma_d_g[pr + 1L] -
+             sigma_d_g[rp + 1L] + sigma_d_g[rr + 1L]
+
+      Omega_phi[active, active] <- Omega_phi[active, active] + outer(sgn, sgn) * S_g / N_g
+    }
+
+    # Cross-cohort contributions: symmetric gamma_{g,g'} for each unordered pair
+    if (n_cohort_grp_hv > 1L) {
+      for (gi in 1L:(n_cohort_grp_hv - 1L)) {
+        active_g <- active_by_cohort_hv[[gi]]
+        sgn_g    <- sign_by_cohort_hv[[gi]]
+        if (length(active_g) == 0L) next
+
+        for (gpi in (gi + 1L):n_cohort_grp_hv) {
+          active_gp <- active_by_cohort_hv[[gpi]]
+          sgn_gp    <- sign_by_cohort_hv[[gpi]]
+          if (length(active_gp) == 0L) next
+
+          gamma_d <- numeric(T_total)
+          for (d in 0L:(T_total - 1L)) {
+            r1 <- 1L:(T_total - d); r2 <- (1L + d):T_total
+            gamma_d[d + 1L] <- (sum(bar_e[r1, gi] * bar_e[r2, gpi]) +
+                                 sum(bar_e[r1, gpi] * bar_e[r2, gi])) /
+                                (2.0 * (T_total - d))
+          }
+
+          tp_g  <- meta_tp[active_g];  tr_g  <- meta_tr[active_g]
+          tp_gp <- meta_tp[active_gp]; tr_gp <- meta_tr[active_gp]
+          pp_c <- abs(outer(tp_g, tp_gp, "-")); pr_c <- abs(outer(tp_g, tr_gp, "-"))
+          rp_c <- abs(outer(tr_g, tp_gp, "-")); rr_c <- abs(outer(tr_g, tr_gp, "-"))
+          S_cross <- gamma_d[pp_c + 1L] - gamma_d[pr_c + 1L] -
+                     gamma_d[rp_c + 1L] + gamma_d[rr_c + 1L]
+
+          cross_block <- outer(sgn_g, sgn_gp) * S_cross
+          Omega_phi[active_g,  active_gp] <- Omega_phi[active_g,  active_gp] + cross_block
+          Omega_phi[active_gp, active_g]  <- Omega_phi[active_gp, active_g]  + t(cross_block)
+        }
+      }
+    }
+
+    Omega_phi <- (Omega_phi + t(Omega_phi)) / 2
+    diag(Omega_phi) <- diag(Omega_phi) + 1e-6
+
+    OQ <- tryCatch(solve(Omega_phi, Q_H), error = function(e) NULL)
+    if (is.null(OQ)) break
+    OD <- solve(Omega_phi, Delta)
+
+    QtAQ <- crossprod(Q_H, OQ)
+    QtAD <- crossprod(Q_H, OD)
+    beta_hat <- as.numeric(tryCatch(solve(QtAQ, QtAD), error = function(e) beta_old))
+
+    if (max(abs(beta_hat - beta_old)) < tol) break
+  }
+
+  list(att = mean(beta_hat), catt = beta_hat)
+}
+
+# ===========================================================================
 # 7. Package-based Estimators (scalar ATT only)
 # ===========================================================================
 
@@ -475,13 +671,14 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
               label, rho, N_total, true_att))
 
   est_names <- c("TWFE", "CS", "SA", "Gardner",
-                 "Flex_TWFE", "Flex_TWFE_FGLS", "GMM_Clean", "GMM_Eff")
+                 "Flex_TWFE", "Flex_TWFE_FGLS",
+                 "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
   n_est <- length(est_names)
   results <- data.table(sim = integer())
   for (nm in est_names) results[, (nm) := numeric()]
 
   # CATT storage matrices (n_sims × n_catt)
-  catt_est  <- c("Flex_TWFE", "GMM_Clean", "GMM_Eff")
+  catt_est  <- c("Flex_TWFE", "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
   catt_mats <- setNames(
     lapply(catt_est, function(x) matrix(NA_real_, nrow = n_sims, ncol = n_catt)),
     catt_est
@@ -503,13 +700,19 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
                               error = function(e) list(att = NA_real_, catt = na_catt))
     gmm_eff_res  <- tryCatch(gmm_efficient(Delta, dt),
                               error = function(e) list(att = NA_real_, catt = na_catt))
+    gmm_hv_res   <- tryCatch(gmm_efficient_hetvar(Delta, dt),
+                              error = function(e) list(att = NA_real_, catt = na_catt))
+    gmm_hc_res   <- tryCatch(gmm_efficient_hetcov(Delta, dt),
+                              error = function(e) list(att = NA_real_, catt = na_catt))
     flex_res     <- estimate_flex_twfe(dt)
     flex_fgls_res <- estimate_flex_twfe_fgls(dt)
 
     # Store CATTs
-    catt_mats[["Flex_TWFE"]][s, ]  <- flex_res$catt
-    catt_mats[["GMM_Clean"]][s, ]  <- gmm_cl_res$catt
-    catt_mats[["GMM_Eff"]][s, ]    <- gmm_eff_res$catt
+    catt_mats[["Flex_TWFE"]][s, ]       <- flex_res$catt
+    catt_mats[["GMM_Clean"]][s, ]       <- gmm_cl_res$catt
+    catt_mats[["GMM_Eff"]][s, ]         <- gmm_eff_res$catt
+    catt_mats[["GMM_Eff_HetVar"]][s, ]  <- gmm_hv_res$catt
+    catt_mats[["GMM_Eff_HetCov"]][s, ]  <- gmm_hc_res$catt
 
     elapsed <- round(proc.time()[3] - t0_sim, 1)
     cat(sprintf("  Sim %d/%d  (%.1fs)\n", s, n_sims, elapsed))
@@ -519,7 +722,8 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
       sim = s, TWFE = att_twfe, CS = att_cs, SA = att_sa,
       Gardner = att_gardner,
       Flex_TWFE = flex_res$att, Flex_TWFE_FGLS = flex_fgls_res$att,
-      GMM_Clean = gmm_cl_res$att, GMM_Eff = gmm_eff_res$att
+      GMM_Clean = gmm_cl_res$att, GMM_Eff = gmm_eff_res$att,
+      GMM_Eff_HetVar = gmm_hv_res$att, GMM_Eff_HetCov = gmm_hc_res$att
     )))
   }
 
@@ -564,10 +768,12 @@ run_simulation <- function(beta_g_vec, r_g_vec, label) {
 # ===========================================================================
 
 cat("================================================================\n")
-cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 8 estimators\n",
+cat(sprintf("  N=%d (%d/cohort), T=%d, rho=%.1f, %d sims, 10 estimators\n",
             N_total, cohort_size, T_total, rho, n_sims))
-cat("  GMM_Clean: efficient GMM on clean DiDs only\n")
-cat("  GMM_Eff:   efficient GMM on all DiDs (clean + forbidden)\n")
+cat("  GMM_Clean:      efficient GMM on clean DiDs only\n")
+cat("  GMM_Eff:        efficient GMM on all DiDs (clean + forbidden)\n")
+cat("  GMM_Eff_HetVar: GMM all DiDs, cohort-specific sigma, cross-cov = 0\n")
+cat("  GMM_Eff_HetCov: GMM all DiDs, cohort-specific sigma + cross-cohort gamma\n")
 cat("================================================================\n")
 
 beta_hom <- rep(-5, n_cohorts); r_hom <- rep(0, n_cohorts)
@@ -585,8 +791,10 @@ cat("\n\n")
 cat("==========================================================================\n")
 cat(sprintf("  TABLE 2: Bias and Variance — AR(1) (rho=%.1f), N=%d (%d/cohort)\n",
             rho, N_total, cohort_size))
-cat("  GMM_Clean: A=Omega_clean^{-1} restricted to clean DiDs\n")
-cat("  GMM_Eff:   A=Omega_phi^{-1} over all DiDs (clean + forbidden)\n")
+cat("  GMM_Clean:      A=Omega_clean^{-1} restricted to clean DiDs\n")
+cat("  GMM_Eff:        A=Omega_phi^{-1} over all DiDs (homogeneous sigma)\n")
+cat("  GMM_Eff_HetVar: A=Omega_phi^{-1}, cohort-specific sigma, cross-cov=0\n")
+cat("  GMM_Eff_HetCov: A=Omega_phi^{-1}, cohort-specific sigma + cross-cohort gamma\n")
 cat("  Flex_TWFE_FGLS: Iterated feasible GLS exploiting AR(1)\n")
 cat("==========================================================================\n\n")
 
@@ -596,7 +804,8 @@ table2 <- merge(
   by = "Estimator"
 )
 est_order <- c("TWFE", "CS", "SA", "Gardner",
-               "Flex_TWFE", "Flex_TWFE_FGLS", "GMM_Clean", "GMM_Eff")
+               "Flex_TWFE", "Flex_TWFE_FGLS",
+               "GMM_Clean", "GMM_Eff", "GMM_Eff_HetVar", "GMM_Eff_HetCov")
 table2 <- table2[match(est_order, table2$Estimator)]
 
 cat(sprintf("%-16s  %12s  %12s  %12s  %12s\n",
@@ -617,15 +826,19 @@ cat("\nResults (incl. CATTs) saved to simulation_dependent_errors_no_fc_results.
 ################## Plots ###############
 library(ggplot2)
 data_plot <- data.frame(
-  rbind(cbind(apply(res_het$catt_mats$GMM_Eff,   2, var), 1),
-        cbind(apply(res_het$catt_mats$GMM_Clean,  2, var), 2),
-        cbind(apply(res_het$catt_mats$Flex_TWFE,  2, var), 3)),
-  c(1:n_catt, 1:n_catt, 1:n_catt)
+  rbind(cbind(apply(res_het$catt_mats$GMM_Eff,        2, var), 1),
+        cbind(apply(res_het$catt_mats$GMM_Clean,       2, var), 2),
+        cbind(apply(res_het$catt_mats$Flex_TWFE,       2, var), 3),
+        cbind(apply(res_het$catt_mats$GMM_Eff_HetVar,  2, var), 4),
+        cbind(apply(res_het$catt_mats$GMM_Eff_HetCov,  2, var), 5)),
+  c(1:n_catt, 1:n_catt, 1:n_catt, 1:n_catt, 1:n_catt)
 )
 colnames(data_plot) <- c("Variance", "Estimator", "Index")
 data_plot[data_plot$Estimator == 1, 2] <- "GMM_Eff"
 data_plot[data_plot$Estimator == 2, 2] <- "GMM_Clean"
 data_plot[data_plot$Estimator == 3, 2] <- "Flex_TWFE"
+data_plot[data_plot$Estimator == 4, 2] <- "GMM_Eff_HetVar"
+data_plot[data_plot$Estimator == 5, 2] <- "GMM_Eff_HetCov"
 
 ggplot(data = data_plot, aes(x = Index, y = Variance, group = Estimator)) +
   geom_line(aes(color = Estimator)) +
@@ -659,10 +872,18 @@ colnames(var_k)[6] <- "pct_gain_clean_over_flex"
 plot(var_k$k, var_k$pct_gain_clean_over_flex, type = "l",
      xlab = "Horizon k", ylab = "% gain GMM_Clean over Flex_TWFE")
 
-## Per-CATT gains: GMM_Clean vs GMM_Eff
-diff_eff_clean <- apply(res_het$catt_mats$GMM_Eff, 2, var) -
-                  apply(res_het$catt_mats$GMM_Clean, 2, var)
+## Per-CATT gains relative to GMM_Clean
 den_clean <- apply(res_het$catt_mats$GMM_Clean, 2, var)
+
+diff_eff_clean <- apply(res_het$catt_mats$GMM_Eff, 2, var) - den_clean
 gain_eff_vs_clean <- -100 * diff_eff_clean / den_clean
 
-cat(sprintf("\nMean %% gain GMM_Eff over GMM_Clean: %.2f%%\n", mean(gain_eff_vs_clean)))
+diff_hetvar_clean <- apply(res_het$catt_mats$GMM_Eff_HetVar, 2, var) - den_clean
+gain_hetvar_vs_clean <- -100 * diff_hetvar_clean / den_clean
+
+diff_hetcov_clean <- apply(res_het$catt_mats$GMM_Eff_HetCov, 2, var) - den_clean
+gain_hetcov_vs_clean <- -100 * diff_hetcov_clean / den_clean
+
+cat(sprintf("\nMean %% gain GMM_Eff over GMM_Clean:        %.2f%%\n", mean(gain_eff_vs_clean)))
+cat(sprintf("Mean %% gain GMM_Eff_HetVar over GMM_Clean: %.2f%%\n", mean(gain_hetvar_vs_clean)))
+cat(sprintf("Mean %% gain GMM_Eff_HetCov over GMM_Clean: %.2f%%\n", mean(gain_hetcov_vs_clean)))
