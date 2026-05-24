@@ -7,52 +7,52 @@
 #         epsilon_it ~ iid N(0, 1)
 #
 # Purpose:
-#   Under homogeneous (constant) treatment effects, pooled TWFE is consistent
-#   and recovers tau. The Goodman-Bacon decomposition expresses the TWFE
-#   estimate as a weighted average of ALL pairwise 2x2 DiD estimates
-#   (including "forbidden" comparisons that use already-treated units as
-#   controls). The two should be numerically identical since the Goodman-Bacon
-#   decomposition is an exact algebraic identity for TWFE, not an approximation.
+#   Under homogeneous effects, TWFE is consistent and equals the Goodman-Bacon
+#   weighted average of ALL 2x2 DiDs (algebraic identity, exact to machine
+#   precision in every replication).
 #
-#   The third estimator (Gardner_Clean) is Gardner's two-stage DiD (did2s).
-#   It uses only clean comparisons by construction: Stage 1 estimates unit and
-#   time fixed effects from untreated/not-yet-treated observations only, so no
-#   already-treated unit ever serves as a control. Stage 2 regresses residuals
-#   on D using all observations.
+#   The third estimator (GB_Clean) uses only the clean 2x2 DiDs from the
+#   Goodman-Bacon decomposition — those whose control group is never-treated
+#   ("Treated vs Untreated") or not-yet-treated ("Earlier vs Later Treated").
+#   Forbidden DiDs ("Later vs Earlier Treated", where an already-treated cohort
+#   serves as control) are dropped.
 #
-#   Why not simple GB weight redistribution?
-#   The intuition "forbidden DiDs are linear combinations of clean DiDs, so
-#   redistribute their weights" works in the fine-grained GMM moment-conditions
-#   framework (one moment per cohort × time cell), where the identity holds
-#   algebraically. In the Goodman-Bacon 2x2 framework each DiD aggregates across
-#   periods with DIFFERENT time windows per pair, so the forbidden 2x2 DiD
-#   (g_l vs already-treated g_e) equals (g_l vs never-treated) minus a residual
-#   term (g_e vs never-treated in g_l's window) that is NOT in the bacon() output.
-#   There are no exact c_{ji} coefficients within the GB 2x2 set.
+#   Weight redistribution (corrected):
+#   Simply renormalizing the remaining clean weights gives the wrong estimator
+#   because it misallocates the weight that was on forbidden DiDs. The correct
+#   redistribution uses the identity:
 #
-#   Gardner operates at the fine-grained moment level (within-period variation),
-#   where redundancy holds exactly. Under homogeneous effects + spherical errors,
-#   Gardner is asymptotically BLUE = TWFE (Gauss-Markov). In finite samples the
-#   two-stage estimation introduces an O(1/N) deviation from TWFE's one-stage
-#   estimate, so |TWFE - Gardner| is small but nonzero in each replication.
+#     E[Phi_j] = E[Delta_{l,nt}]
+#
+#   where Phi_j is the forbidden DiD (g_l vs already-treated g_e) and
+#   Delta_{l,nt} is the clean "Treated vs Untreated" DiD for the same focal
+#   cohort g_l. Under homogeneous effects, g_e's treatment effect cancels
+#   completely in Phi_j (g_e is treated in BOTH the pre and post periods of
+#   the comparison window), so the forbidden DiD is informationally equivalent
+#   to Delta_{l,nt} in expectation. Redistributing weight v_j to Delta_{l,nt}
+#   preserves the total weight = 1 and gives E[GB_Clean] = E[TWFE] = tau.
+#
+#   In finite samples, GB_Clean differs from TWFE by the noise term
+#   Sigma_j v_j * (Delta_{l,nt} - Phi_j), which has mean zero. Both
+#   estimators are unbiased with comparable variance.
 #
 # Estimators:
-#   1. TWFE:          pooled two-way FE (feols with unit + time FE)
-#   2. GB:            Goodman-Bacon weighted average — ALL 2x2 DiDs (exact = TWFE)
-#   3. Gardner_Clean: two-stage DiD (did2s) — clean comparisons only by construction
+#   1. TWFE:     pooled two-way FE (feols with unit + time FE)
+#   2. GB:       Goodman-Bacon weighted average — ALL 2x2 DiDs (exact = TWFE)
+#   3. GB_Clean: Goodman-Bacon weighted average — clean DiDs only, with
+#                forbidden weights redistributed to the focal cohort's
+#                "Treated vs Untreated" DiD (corrected weights, sum = 1)
 #
-# Simulation: 100 iterations, track point estimates and check:
+# Simulation: 100 iterations, check:
 #   - Bias of each estimator relative to true tau = 1
 #   - Variance across replications
-#   - Whether TWFE == GB numerically in every replication
-#   - Whether Gardner_Clean recovers tau despite using only clean comparisons
-#   - Size of finite-sample gap between TWFE and Gardner_Clean (vanishes as N grows)
+#   - TWFE == GB to machine precision in every replication
+#   - GB_Clean recovers tau with ~zero bias despite discarding forbidden DiDs
 ###############################################################################
 
 library(data.table)
 library(fixest)
 library(bacondecomp)   # install.packages("bacondecomp") if needed
-library(did2s)         # install.packages("did2s") if needed
 
 set.seed(42)
 
@@ -60,16 +60,15 @@ set.seed(42)
 # 1. Parameters
 # ===========================================================================
 
-tau_true        <- 1.0      # homogeneous treatment effect
-cohort_size     <- 20       # units per treatment cohort
-n_never         <- 20       # never-treated units
-treatment_times <- c(5, 8, 11, 14)   # cohort treatment start periods
+tau_true        <- 1.0
+cohort_size     <- 20
+n_never         <- 20
+treatment_times <- c(5, 8, 11, 14)
 n_cohorts       <- length(treatment_times)
-T_total         <- 20       # total time periods
+T_total         <- 20
 N_total         <- n_cohorts * cohort_size + n_never
 n_sims          <- 100
 
-# Unit-to-cohort mapping: 0 means never-treated
 unit_cohort <- c(rep(treatment_times, each = cohort_size), rep(0L, n_never))
 unit_ids    <- seq_len(N_total)
 time_ids    <- seq_len(T_total)
@@ -79,24 +78,17 @@ time_ids    <- seq_len(T_total)
 # ===========================================================================
 
 generate_data <- function() {
-  # Unit and time fixed effects
-  alpha_i <- rnorm(N_total)                   # unit FE
-  lambda_t <- rnorm(T_total)                  # time FE
-  eps      <- rnorm(N_total * T_total)        # iid N(0,1) errors
+  alpha_i <- rnorm(N_total)
+  lambda_t <- rnorm(T_total)
+  eps      <- rnorm(N_total * T_total)
 
-  # Build panel (long format)
   dt <- data.table(
     id   = rep(unit_ids,  each  = T_total),
     time = rep(time_ids,  times = N_total),
-    g    = rep(unit_cohort, each = T_total)   # cohort (0 = never)
+    g    = rep(unit_cohort, each = T_total)
   )
-
-  # Treatment indicator
   dt[, D := as.integer(g > 0 & time >= g)]
-
-  # Outcome
   dt[, Y := alpha_i[id] + lambda_t[time] + tau_true * D + eps]
-
   return(dt)
 }
 
@@ -105,42 +97,52 @@ generate_data <- function() {
 # ===========================================================================
 
 results <- data.table(
-  sim           = seq_len(n_sims),
-  TWFE          = NA_real_,
-  GB            = NA_real_,
-  Gardner_Clean = NA_real_
+  sim      = seq_len(n_sims),
+  TWFE     = NA_real_,
+  GB       = NA_real_,
+  GB_Clean = NA_real_
 )
 
 for (s in seq_len(n_sims)) {
   dt <- generate_data()
 
   # --- TWFE ------------------------------------------------------------------
-  fit_twfe  <- feols(Y ~ D | id + time, data = dt, warn = FALSE, notes = FALSE)
-  twfe_est  <- coef(fit_twfe)["D"]
+  fit_twfe <- feols(Y ~ D | id + time, data = dt, warn = FALSE, notes = FALSE)
+  twfe_est <- coef(fit_twfe)["D"]
 
   # --- Goodman-Bacon decomposition -------------------------------------------
-  # bacon() returns one row per pairwise 2x2 DiD with its weight and type.
-  # Types produced by bacondecomp:
-  #   "Earlier Treated vs Untreated"  — early cohort vs never-treated (CLEAN)
-  #   "Later Treated vs Untreated"    — late cohort vs never-treated  (CLEAN)
-  #   "Earlier vs Later Treated"      — early cohort vs not-yet-treated late (CLEAN)
-  #   "Later vs Earlier Treated"      — late cohort vs already-treated early (FORBIDDEN)
-  gb_out  <- bacon(Y ~ D, data = dt, id_var = "id", time_var = "time")
-  gb_est  <- sum(gb_out$estimate * gb_out$weight)  # weighted average = TWFE exactly
-
-  # --- Gardner_Clean: two-stage DiD using only clean comparisons -------------
-  # Stage 1: regress Y on unit FE + time FE from D=0 (untreated) obs only.
-  # Stage 2: regress residuals on D using all observations.
-  # No already-treated unit ever enters as control — all comparisons are clean.
-  # Converges to TWFE as N→∞ (both are BLUE under homogeneous + spherical errors).
-  # Finite-sample gap with TWFE is O(1/N) from two-stage vs one-stage partialling.
-  fit_gardner   <- suppressMessages(
-    did2s(dt, yname = "Y", first_stage = ~ 0 | id + time,
-          second_stage = ~ D, treatment = "D", cluster_var = "id")
+  # bacon() columns: treated, untreated, estimate, weight, type
+  # Types:
+  #   "Treated vs Untreated"    — any cohort vs never-treated          (CLEAN)
+  #   "Earlier vs Later Treated"— early cohort vs not-yet-treated late (CLEAN)
+  #   "Later vs Earlier Treated"— late cohort vs already-treated early (FORBIDDEN)
+  gb_out <- suppressMessages(
+    bacon(Y ~ D, data = dt, id_var = "id", time_var = "time")
   )
-  gardner_est <- coef(fit_gardner)["D"]
+  gb_est <- sum(gb_out$estimate * gb_out$weight)   # = TWFE exactly
 
-  results[s, `:=`(TWFE = twfe_est, GB = gb_est, Gardner_Clean = gardner_est)]
+  # --- GB_Clean: corrected weight redistribution -----------------------------
+  # For each forbidden DiD j (g_l vs g_e, weight v_j):
+  #   E[Phi_j] = E[Delta_{l,nt}] because g_e is already treated in both
+  #   the pre- and post-period of g_l's comparison window, so g_e's treatment
+  #   effect cancels and the forbidden DiD reduces to (g_l vs never-treated)
+  #   plus mean-zero noise. Redistribute v_j onto Delta_{l,nt} where
+  #   l = gb_out$treated for that forbidden row.
+  gb_corr <- gb_out
+  forbidden_idx <- which(gb_corr$type == "Later vs Earlier Treated")
+  for (r in forbidden_idx) {
+    g_l   <- gb_corr$treated[r]    # focal later cohort
+    v_j   <- gb_corr$weight[r]
+    nt_r  <- which(gb_corr$type == "Treated vs Untreated" &
+                   gb_corr$treated == g_l)
+    gb_corr$weight[nt_r] <- gb_corr$weight[nt_r] + v_j   # redistribute
+  }
+  # Drop forbidden rows (their weight is now zero by redistribution)
+  gb_clean_rows <- gb_corr[gb_corr$type != "Later vs Earlier Treated", ]
+  gb_clean_est  <- sum(gb_clean_rows$estimate * gb_clean_rows$weight)
+  # Weights already sum to 1 — no renormalization needed
+
+  results[s, `:=`(TWFE = twfe_est, GB = gb_est, GB_Clean = gb_clean_est)]
 }
 
 # ===========================================================================
@@ -149,46 +151,39 @@ for (s in seq_len(n_sims)) {
 
 cat("\n=== Simulation Results (n_sims =", n_sims, ", tau_true =", tau_true, ") ===\n\n")
 
-cat(sprintf("%-25s %10s %10s %12s\n", "Estimator", "Mean", "Bias", "Std Dev"))
-cat(strrep("-", 60), "\n")
-
-for (col in c("TWFE", "GB", "Gardner_Clean")) {
+cat(sprintf("%-20s %10s %10s %12s\n", "Estimator", "Mean", "Bias", "Std Dev"))
+cat(strrep("-", 55), "\n")
+for (col in c("TWFE", "GB", "GB_Clean")) {
   vals <- results[[col]]
-  cat(sprintf("%-25s %10.6f %10.6f %12.6f\n",
-              col,
-              mean(vals),
-              mean(vals) - tau_true,
-              sd(vals)))
+  cat(sprintf("%-20s %10.6f %10.6f %12.6f\n",
+              col, mean(vals), mean(vals) - tau_true, sd(vals)))
 }
 
 cat("\n=== Numerical Equivalence: TWFE vs GB (all DiDs) ===\n")
 diffs_gb <- abs(results$TWFE - results$GB)
-cat(sprintf("Max |TWFE - GB| across %d replications: %.2e\n", n_sims, max(diffs_gb)))
-cat(sprintf("Mean |TWFE - GB|:                        %.2e\n", mean(diffs_gb)))
-cat(sprintf("All differences < 1e-8: %s\n", ifelse(all(diffs_gb < 1e-8), "YES", "NO")))
-cat("(Exact to machine precision — GB is an algebraic identity for TWFE)\n")
+cat(sprintf("Max |TWFE - GB|:   %.2e  (algebraic identity — exact to machine precision)\n",
+            max(diffs_gb)))
+cat(sprintf("All < 1e-8: %s\n", ifelse(all(diffs_gb < 1e-8), "YES", "NO")))
 
-cat("\n=== Bias comparison: TWFE vs Gardner_Clean (clean comparisons only) ===\n")
-diffs_gardner <- results$TWFE - results$Gardner_Clean
-cat(sprintf("Mean (TWFE - Gardner_Clean):  %8.6f  (should be ~0; both unbiased)\n",
-            mean(diffs_gardner)))
-cat(sprintf("Std (TWFE - Gardner_Clean):   %8.6f  (finite-sample two-stage gap)\n",
-            sd(diffs_gardner)))
-cat(sprintf("Max |TWFE - Gardner_Clean|:   %8.6f  (shrinks as N grows)\n",
-            max(abs(diffs_gardner))))
-cat("(Gardner_Clean is unbiased and converges to TWFE as N->Inf,\n")
-cat(" but differs by O(1/N) in finite samples due to two-stage vs one-stage FE)\n")
+cat("\n=== Bias comparison: TWFE vs GB_Clean (clean DiDs, corrected weights) ===\n")
+diffs_clean <- results$TWFE - results$GB_Clean
+cat(sprintf("Mean (TWFE - GB_Clean):  %8.6f  (should be ~0; both unbiased for tau)\n",
+            mean(diffs_clean)))
+cat(sprintf("Std  (TWFE - GB_Clean):  %8.6f\n", sd(diffs_clean)))
+cat(sprintf("Max |TWFE - GB_Clean|:   %8.6f\n", max(abs(diffs_clean))))
+cat("Note: GB_Clean differs from TWFE by Sigma_j v_j*(Delta_l_nt - Phi_j),\n")
+cat("      a mean-zero noise term; the two are NOT algebraically identical.\n")
 
 cat("\n=== Per-Replication Detail (first 10 sims) ===\n")
-cat(sprintf("%-6s %10s %10s %12s %12s %12s\n",
-            "Sim", "TWFE", "GB", "Gard_Clean", "|TWFE-GB|", "|TWFE-Gard|"))
-cat(strrep("-", 70), "\n")
+cat(sprintf("%-6s %10s %10s %10s %12s %12s\n",
+            "Sim", "TWFE", "GB", "GB_Clean", "|TWFE-GB|", "|TWFE-Cln|"))
+cat(strrep("-", 65), "\n")
 for (s in seq_len(min(10, n_sims))) {
-  cat(sprintf("%-6d %10.6f %10.6f %12.6f %12.2e %12.6f\n",
+  cat(sprintf("%-6d %10.6f %10.6f %10.6f %12.2e %12.6f\n",
               s,
               results$TWFE[s],
               results$GB[s],
-              results$Gardner_Clean[s],
+              results$GB_Clean[s],
               abs(results$TWFE[s] - results$GB[s]),
-              abs(results$TWFE[s] - results$Gardner_Clean[s])))
+              abs(results$TWFE[s] - results$GB_Clean[s])))
 }
