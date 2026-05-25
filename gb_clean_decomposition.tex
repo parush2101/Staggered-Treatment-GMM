@@ -517,6 +517,67 @@ is therefore not a convex combination of clean DiDs; it is a signed linear
 combination of clean DiDs that numerically equals the convex combination of all
 DiDs (including forbidden ones) given in Theorem~\ref{thm:gb}.
 
+\subsection{Period-Specific Representation}
+\label{sec:period_specific}
+
+The aggregate never-treated DiD $\hDelta_{g,\infty}$ in \eqref{eq:did_nt}
+collapses the entire post-treatment window and the entire pre-treatment window
+into scalar averages before differencing. It can be decomposed into its
+constituent period-specific building blocks.
+
+\begin{proposition}
+  \label{prop:period_specific}
+  The aggregate never-treated DiD defined in \eqref{eq:did_nt} satisfies
+  \begin{equation}
+    \hDelta_{g,\infty}
+    \;=\;
+    \frac{1}{(T-g+1)(g-1)}
+    \sum_{k=0}^{T-g}\sum_{m=1}^{g-1}
+    \hbeta^{\infty m}_{g,\,g+k},
+    \label{eq:window_decomp}
+  \end{equation}
+  an equal-weighted average over all $(T-g+1)(g-1)$ period-by-lag pairs
+  $(k,m)$.
+\end{proposition}
+
+\begin{proof}
+  Substituting \eqref{eq:2x2} and separating the double sum:
+  \begin{align*}
+    &\frac{1}{(T-g+1)(g-1)}
+    \sum_{k,m}
+    \bigl[(Y_{g,g+k}-Y_{g,g-m})-(Y_{\infty,g+k}-Y_{\infty,g-m})\bigr]
+    \\[4pt]
+    &\;=\;
+    \underbrace{\frac{1}{T-g+1}\sum_{k=0}^{T-g}Y_{g,g+k}}_{\bY_{g,\Tpost_g}}
+    -\underbrace{\frac{1}{g-1}\sum_{m=1}^{g-1}Y_{g,g-m}}_{\bY_{g,\Tpre_g}}
+    -\underbrace{\frac{1}{T-g+1}\sum_{k=0}^{T-g}Y_{\infty,g+k}}_{\bY_{\infty,\Tpost_g}}
+    +\underbrace{\frac{1}{g-1}\sum_{m=1}^{g-1}Y_{\infty,g-m}}_{\bY_{\infty,\Tpre_g}}
+    \;=\;\hDelta_{g,\infty},
+  \end{align*}
+  where the separation uses the fact that $Y_{g,g+k}$ appears $(g-1)$ times
+  (once for each $m$) and $Y_{g,g-m}$ appears $(T-g+1)$ times (once for each
+  $k$); the cross-terms cancel identically.
+\end{proof}
+
+\noindent
+The period-specific GB weight on the individual never-treated DiD
+$\hbeta^{\infty m}_{g,g+k}$ contributed by Group~(I) is therefore
+\begin{equation}
+  \omega^{\mathrm{GB}}_{g,k,m}
+  \;=\;
+  \frac{w_{g\infty}}{(T-g+1)(g-1)},
+  \label{eq:ps_weight}
+\end{equation}
+which is \emph{equal across all $(k,m)$ pairs} within a given cohort $g$:
+the GB cohort weight $w_{g\infty}\propto N_gN_\infty(T-g+1)(g-1)/T^2$ is
+spread uniformly over the $(T-g+1)(g-1)$ period-by-lag pairs. An analogous
+equal-weighted decomposition holds for the not-yet-treated DiDs in Group~(I).
+
+This period-specific view places the clean GB decomposition in the same
+language as the heterogeneity-robust estimators of Callaway and Sant'Anna
+(2021) and Gardner et al.\ (2024), which we compare in
+Section~\ref{sec:comparison}.
+
 %%%============================================================================
 \section{Bias Under Heterogeneous Treatment Effects}
 \label{sec:hetero}
@@ -688,6 +749,188 @@ redundant for identification, and their removal does not sacrifice any
 information about $\theta$.
 
 %%%============================================================================
+\section{Comparison with Callaway--Sant'Anna and Gardner}
+\label{sec:comparison}
+%%%============================================================================
+
+The period-specific representation \eqref{eq:window_decomp} and the
+weight~\eqref{eq:ps_weight} express the unbiased part of the clean GB
+decomposition---Groups~(I) and~(II) with Group~(III) zeroed out---as a
+weighted sum of never-treated $2\times2$ DiDs $\hbeta^{\infty m}_{g,g+k}$
+indexed by cohort $g$, event time $k$, and pre-lag $m$. This common language
+makes precise how clean GB differs from Callaway and Sant'Anna (2021; CS) and
+Gardner et al.\ (2024) along three dimensions: the treatment of the pre-lag
+$m$, the aggregation over event time $k$, and the cohort weighting scheme.
+
+\subsection{Callaway and Sant'Anna (2021)}
+\label{sec:cs}
+
+CS estimate each CATT $\beta_{g,g+k}$ using a \emph{single} pre-period lag
+$m=1$:
+\begin{equation}
+  \hbeta^{CS}_{g,g+k}
+  \;\equiv\;
+  \hbeta^{\infty 1}_{g,\,g+k}
+  \;=\;
+  (Y_{g,g+k}-Y_{g,g-1})-(Y_{\infty,g+k}-Y_{\infty,g-1}).
+  \label{eq:cs_catt}
+\end{equation}
+The researcher then applies chosen cohort-and-event weights $w^{CS}_{g,g+k}$
+to aggregate across $(g,k)$ cells:
+\begin{equation}
+  \hat{\theta}^{CS}
+  \;=\;
+  \sum_{g\neq\infty}\sum_{k=0}^{T-g}
+  w^{CS}_{g,g+k}\,\hbeta^{\infty 1}_{g,\,g+k}.
+  \label{eq:cs_agg}
+\end{equation}
+CS also supports not-yet-treated units as an alternative control group in
+place of, or in addition to, the never-treated group.
+
+\paragraph{Difference from clean GB.}
+Both estimators use only clean controls and are unbiased under heterogeneous
+effects. The key difference is in the $m$-dimension. CS places all weight on
+$m=1$ and zero weight on $m\geq2$. The period-specific clean GB weight
+$\omega^{GB}_{g,k,m}=w_{g\infty}/[(T-g+1)(g-1)]$ is spread equally across
+all $m\in\{1,\ldots,g-1\}$, making full use of all pre-treatment periods.
+In the $k$-dimension, CS allows the researcher to choose $w^{CS}_{g,g+k}$
+freely, while clean GB inherits the GB cohort weight $w_{g\infty}$ distributed
+equally over $k$.
+
+\paragraph{Advantages of CS relative to clean GB.}
+\begin{enumerate}
+  \item \textbf{Researcher-specified aggregation.} The weights $w^{CS}_{g,g+k}$
+    can target any aggregate ATT---event-study curves, calendar-time averages,
+    or cohort-specific effects---without being constrained to the GB variance-
+    based weighting scheme.
+  \item \textbf{Period-specific CATTs.} CS delivers $\hbeta^{CS}_{g,g+k}$ as
+    an explicit output for each $(g,k)$ cell, enabling event-study plots and
+    formal tests of treatment effect dynamics. Clean GB produces only the
+    cohort-level window average $\hDelta_{g,\infty}$.
+  \item \textbf{Uniform pre-trend diagnostic.} Using the same estimand
+    $\hbeta^{\infty 1}_{g,g+k}$ at negative horizons $k<0$ provides a natural
+    and consistently defined pre-trend test across the full event window.
+\end{enumerate}
+
+\paragraph{Disadvantages of CS relative to clean GB.}
+\begin{enumerate}
+  \item \textbf{Efficiency loss from discarding pre-periods.} By using only
+    $m=1$, CS ignores all pre-treatment periods $g-2,g-3,\ldots,1$. Under
+    parallel trends each such period provides valid identifying variation;
+    averaging over all pre-lags (as clean GB and Gardner do) reduces variance
+    without biasing the estimate. For a cohort treated at $g$ with $g\geq3$,
+    the gain from averaging grows with $g-1$.
+  \item \textbf{Sensitivity to the base period.} The estimand
+    $\hbeta^{\infty 1}_{g,g+k}$ is anchored to the single pre-treatment period
+    $g-1$. If that period is atypical due to measurement noise, anticipation
+    effects, or seasonal patterns, the estimates are sensitive to this choice.
+    Averaging over multiple pre-lags dilutes such sensitivity.
+\end{enumerate}
+
+\subsection{Gardner et al.\ (2024)}
+\label{sec:gardner}
+
+Gardner et al.\ (2024) estimate CATTs by a two-stage procedure: unit and time
+fixed effects are estimated on untreated observations (never-treated units and
+pre-treatment periods of treated units), and treatment-effect residuals are
+then regressed on cohort-by-event-time indicators. Under parallel trends with
+never-treated as control, the Gardner CATT estimator equals the equal-weighted
+average of never-treated DiDs over all pre-lags:
+\begin{equation}
+  \hbeta^{G}_{g,g+k}
+  \;\equiv\;
+  \frac{1}{g-1}\sum_{m=1}^{g-1}\hbeta^{\infty m}_{g,\,g+k}.
+  \label{eq:gardner_catt}
+\end{equation}
+Applying researcher-chosen weights $w^G_{g,g+k}$, the aggregate Gardner
+estimator is
+\begin{equation}
+  \hat{\theta}^{G}
+  \;=\;
+  \sum_{g\neq\infty}\sum_{k=0}^{T-g}
+  w^G_{g,g+k}\,\hbeta^{G}_{g,g+k}
+  \;=\;
+  \sum_{g\neq\infty}\sum_{k=0}^{T-g}\sum_{m=1}^{g-1}
+  \frac{w^G_{g,g+k}}{g-1}\,\hbeta^{\infty m}_{g,\,g+k}.
+  \label{eq:gardner_agg}
+\end{equation}
+
+\paragraph{Difference from clean GB.}
+Gardner and clean GB agree on the $m$-dimension: both average over all pre-lags
+$m\in\{1,\ldots,g-1\}$ with equal weight within each cohort. They differ in
+how event time $k$ and cohort weights are handled. Clean period-specific GB
+assigns equal weight across all $k$ within a cohort ($\omega^{GB}_{g,k,m}$
+is constant in $k$), with cohort weight $w_{g\infty}\propto
+N_gN_\infty(T-g+1)(g-1)/T^2$. Gardner allows $w^G_{g,g+k}$ to vary
+freely over $(g,k)$. Setting $w^G_{g,g+k}=w_{g\infty}/(T-g+1)$---uniform
+over $k$ within each cohort and equal to the GB cohort weights---makes the
+two estimators numerically identical.
+
+\paragraph{Advantages of Gardner relative to clean GB.}
+\begin{enumerate}
+  \item \textbf{Researcher-specified event-study weights.} Like CS, Gardner
+    decouples estimation ($\hbeta^G_{g,g+k}$) from aggregation (the weights
+    $w^G_{g,g+k}$). The researcher can target specific event horizons or
+    compute treatment dynamics that clean GB does not directly deliver.
+  \item \textbf{Period-specific CATTs.} $\hbeta^G_{g,g+k}$ is defined at the
+    $(g,k)$ cell level, enabling event-study analysis of how effects evolve
+    since treatment onset.
+  \item \textbf{Full use of pre-treatment information.} By averaging over all
+    $m$, Gardner is (weakly) more efficient than CS in the pre-lag dimension
+    for any cohort with $g\geq3$.
+\end{enumerate}
+
+\paragraph{Disadvantages of Gardner relative to clean GB.}
+\begin{enumerate}
+  \item \textbf{Non-GB cohort weights.} The cohort weight implied by constant
+    $w^G_{g,g+k}$ is proportional to $N_g(T-g+1)$, omitting the
+    $N_\infty(g-1)$ factor in $w_{g\infty}$. Neither scheme is uniformly
+    superior; the appropriate choice depends on the target estimand.
+  \item \textbf{Two-stage inference.} First-stage FE estimation introduces
+    additional sampling uncertainty requiring inference adjustment---typically
+    a bootstrap---at greater computational cost than the single-stage clean GB
+    decomposition.
+\end{enumerate}
+
+\subsection{Summary}
+\label{sec:comparison_summary}
+
+Table~\ref{tab:comparison} collects the key differences.
+
+\begin{table}[ht]
+\centering
+\caption{Clean GB, CS, and Gardner along the period-specific representation}
+\label{tab:comparison}
+\begin{tabular}{lccc}
+\toprule
+Feature & Clean GB (Groups~I+II) & CS & Gardner \\
+\midrule
+Control group & Never- and not-yet-treated & Never- or not-yet-treated & Never-treated \\
+Pre-lag $m$ & All $m$, equal weight & Fixed $m=1$ & All $m$, equal weight \\
+Event-time $k$ weight & Equal within cohort & Researcher-specified & Researcher-specified \\
+Cohort weight & $w_{g\infty}\propto N_gN_\infty(T{-}g{+}1)(g{-}1)$ & Researcher-specified & Researcher-specified \\
+Period-specific CATTs & No (window aggregate) & Yes & Yes \\
+Unbiased (heterog.) & Yes & Yes & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+The three estimators span a trade-off between transparency and flexibility.
+Clean GB is directly linked to the algebra of TWFE---revealing exactly which
+comparisons drive its behaviour and where its bias originates---but it produces
+only the cohort-level window average $\hDelta_{g,\infty}$ rather than
+period-specific CATTs. CS and Gardner decouple estimation from aggregation,
+giving the researcher control over event-time and cohort weights, at the cost
+of requiring explicit aggregation decisions.
+
+Within the class of estimators that average over all pre-lags $m$, Gardner
+and clean GB produce the same CATT estimates and differ only in the $(g,k)$
+weighting. Within the class of estimators that fix $m=1$, CS is the canonical
+representative. The efficiency cost of restricting to $m=1$ is borne whenever
+a cohort has more than one pre-treatment period.
+
+%%%============================================================================
 \section{Discussion}
 \label{sec:discussion}
 %%%============================================================================
@@ -719,6 +962,8 @@ formula~\eqref{eq:bias_formula} suggest a natural taxonomy:
     assign zero weight to Group~(III) and positive weight to Groups~(I)
     and~(II) only. Unbiased under heterogeneous effects; potentially
     inefficient because the covariance structure of clean moments is ignored.
+    Section~\ref{sec:comparison} compares CS and Gardner in detail along the
+    pre-lag and event-time dimensions of the period-specific representation.
 
   \item \textbf{Optimal GMM}: assigns weights to clean moments that minimise
     asymptotic variance by exploiting their serial covariance structure.
@@ -743,6 +988,11 @@ constant effects and non-zero under time-varying heterogeneous effects. The bias
 of TWFE equals minus the weighted sum of changes in already-treated cohorts'
 CATTs (equation~\eqref{eq:bias_formula}). An unbiased estimator must zero out
 the Group~(III) terms and re-normalise the remaining positive-weight clean DiDs
-to target the desired aggregate ATT.
+to target the desired aggregate ATT. Section~\ref{sec:comparison} shows how
+this construction relates to Callaway and Sant'Anna (2021) and Gardner
+et al.\ (2024) in the period-specific representation, highlighting where the
+estimators agree---use of clean controls, and averaging over all pre-lags in
+the case of Gardner---and where they differ in their treatment of event-time
+weights and cohort weighting schemes.
 
 \end{document}
