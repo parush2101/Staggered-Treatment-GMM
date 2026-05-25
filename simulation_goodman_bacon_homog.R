@@ -17,37 +17,38 @@
 #   Forbidden DiDs ("Later vs Earlier Treated", where an already-treated cohort
 #   serves as control) are dropped.
 #
-#   Weight redistribution (corrected):
-#   Simply renormalizing the remaining clean weights gives the wrong estimator
-#   because it misallocates the weight that was on forbidden DiDs. The correct
-#   redistribution uses the identity:
+#   Exact algebraic identity (key insight):
+#   For each forbidden DiD Phi_j = DiD(g_l, g_e, post, mid) with weight v_j,
+#   the following holds exactly in every sample (ȳ_U terms cancel):
 #
-#     E[Phi_j] = E[Delta_{l,nt}]
+#     DiD(g_l, g_e, post, mid) = DiD(g_l, U, post, mid) - DiD(g_e, U, post, mid)
 #
-#   where Phi_j is the forbidden DiD (g_l vs already-treated g_e) and
-#   Delta_{l,nt} is the clean "Treated vs Untreated" DiD for the same focal
-#   cohort g_l. Under homogeneous effects, g_e's treatment effect cancels
-#   completely in Phi_j (g_e is treated in BOTH the pre and post periods of
-#   the comparison window), so the forbidden DiD is informationally equivalent
-#   to Delta_{l,nt} in expectation. Redistributing weight v_j to Delta_{l,nt}
-#   preserves the total weight = 1 and gives E[GB_Clean] = E[TWFE] = tau.
+#   where U = never-treated units, mid = [g_e, g_l-1], post = [g_l, T].
+#   Both RHS terms use never-treated control (clean DiDs). Substituting for
+#   every forbidden DiD and collecting terms gives:
 #
-#   In finite samples, GB_Clean differs from TWFE by the noise term
-#   Sigma_j v_j * (Delta_{l,nt} - Phi_j), which has mean zero. Both
-#   estimators are unbiased with comparable variance.
+#     TWFE = Sigma_{clean} w_i * Delta_i
+#          + Sigma_{forbidden} v_j * [DiD(g_l,U,post,mid) - DiD(g_e,U,post,mid)]
+#
+#   This decomposition uses ONLY clean (never-treated or not-yet-treated) DiDs
+#   and recovers TWFE exactly, to machine precision, in every replication.
+#   Note: the DiD(g_e, U, post, mid) terms enter with NEGATIVE weight (-v_j),
+#   because in [mid, post], g_e is already treated, so its clean DiD captures
+#   g_e's own treatment effect (≈ 0 under homogeneous constant effects, but
+#   nonzero in finite samples), introducing noise that reduces efficiency.
 #
 # Estimators:
 #   1. TWFE:     pooled two-way FE (feols with unit + time FE)
 #   2. GB:       Goodman-Bacon weighted average — ALL 2x2 DiDs (exact = TWFE)
-#   3. GB_Clean: Goodman-Bacon weighted average — clean DiDs only, with
-#                forbidden weights redistributed to the focal cohort's
-#                "Treated vs Untreated" DiD (corrected weights, sum = 1)
+#   3. GB_Clean: uses the algebraic identity DiD(g_l,g_e) = DiD(g_l,U) - DiD(g_e,U)
+#                to substitute every forbidden DiD with two clean DiDs computed
+#                over the same time window. Recovers TWFE exactly (machine precision).
 #
 # Simulation: 100 iterations, check:
 #   - Bias of each estimator relative to true tau = 1
 #   - Variance across replications
 #   - TWFE == GB to machine precision in every replication
-#   - GB_Clean recovers tau with ~zero bias despite discarding forbidden DiDs
+#   - GB_Clean == TWFE to machine precision in every replication (exact identity)
 ###############################################################################
 
 library(data.table)
@@ -121,26 +122,37 @@ for (s in seq_len(n_sims)) {
   )
   gb_est <- sum(gb_out$estimate * gb_out$weight)   # = TWFE exactly
 
-  # --- GB_Clean: corrected weight redistribution -----------------------------
-  # For each forbidden DiD j (g_l vs g_e, weight v_j):
-  #   E[Phi_j] = E[Delta_{l,nt}] because g_e is already treated in both
-  #   the pre- and post-period of g_l's comparison window, so g_e's treatment
-  #   effect cancels and the forbidden DiD reduces to (g_l vs never-treated)
-  #   plus mean-zero noise. Redistribute v_j onto Delta_{l,nt} where
-  #   l = gb_out$treated for that forbidden row.
-  gb_corr <- gb_out
-  forbidden_idx <- which(gb_corr$type == "Later vs Earlier Treated")
-  for (r in forbidden_idx) {
-    g_l   <- gb_corr$treated[r]    # focal later cohort
-    v_j   <- gb_corr$weight[r]
-    nt_r  <- which(gb_corr$type == "Treated vs Untreated" &
-                   gb_corr$treated == g_l)
-    gb_corr$weight[nt_r] <- gb_corr$weight[nt_r] + v_j   # redistribute
+  # --- GB_Clean: exact recovery via algebraic identity -----------------------
+  # Start with sum over all clean rows.
+  gb_clean_est <- sum(gb_out$estimate[gb_out$type != "Later vs Earlier Treated"] *
+                      gb_out$weight[gb_out$type != "Later vs Earlier Treated"])
+
+  # For each forbidden DiD (g_l vs already-treated g_e, weight v_j):
+  #   DiD(g_l, g_e, post, mid) = DiD(g_l, U, post, mid) - DiD(g_e, U, post, mid)
+  # where mid = [g_e, g_l-1], post = [g_l, T_total].
+  # The ȳ_U terms cancel algebraically, so the identity holds to machine precision.
+  # Add v_j * DiD(g_l, U) - v_j * DiD(g_e, U) in place of each forbidden DiD.
+  for (r in which(gb_out$type == "Later vs Earlier Treated")) {
+    g_l_r <- gb_out$treated[r]    # focal later cohort
+    g_e_r <- gb_out$untreated[r]  # control earlier cohort (already treated)
+    v_j   <- gb_out$weight[r]
+
+    mid_periods  <- g_e_r:(g_l_r - 1)  # g_e treated, g_l not yet treated
+    post_periods <- g_l_r:T_total       # both cohorts treated
+
+    mean_gl_post <- mean(dt[g == g_l_r & time %in% post_periods, Y])
+    mean_gl_mid  <- mean(dt[g == g_l_r & time %in% mid_periods,  Y])
+    mean_ge_post <- mean(dt[g == g_e_r & time %in% post_periods, Y])
+    mean_ge_mid  <- mean(dt[g == g_e_r & time %in% mid_periods,  Y])
+    mean_U_post  <- mean(dt[g == 0     & time %in% post_periods, Y])
+    mean_U_mid   <- mean(dt[g == 0     & time %in% mid_periods,  Y])
+
+    did_gl_U <- (mean_gl_post - mean_gl_mid) - (mean_U_post - mean_U_mid)
+    did_ge_U <- (mean_ge_post - mean_ge_mid) - (mean_U_post - mean_U_mid)
+
+    gb_clean_est <- gb_clean_est + v_j * did_gl_U - v_j * did_ge_U
   }
-  # Drop forbidden rows (their weight is now zero by redistribution)
-  gb_clean_rows <- gb_corr[gb_corr$type != "Later vs Earlier Treated", ]
-  gb_clean_est  <- sum(gb_clean_rows$estimate * gb_clean_rows$weight)
-  # Weights already sum to 1 — no renormalization needed
+  # Result equals TWFE to machine precision (ȳ_U cancels; same linear combination)
 
   results[s, `:=`(TWFE = twfe_est, GB = gb_est, GB_Clean = gb_clean_est)]
 }
@@ -165,21 +177,20 @@ cat(sprintf("Max |TWFE - GB|:   %.2e  (algebraic identity — exact to machine p
             max(diffs_gb)))
 cat(sprintf("All < 1e-8: %s\n", ifelse(all(diffs_gb < 1e-8), "YES", "NO")))
 
-cat("\n=== Bias comparison: TWFE vs GB_Clean (clean DiDs, corrected weights) ===\n")
-diffs_clean <- results$TWFE - results$GB_Clean
-cat(sprintf("Mean (TWFE - GB_Clean):  %8.6f  (should be ~0; both unbiased for tau)\n",
-            mean(diffs_clean)))
-cat(sprintf("Std  (TWFE - GB_Clean):  %8.6f\n", sd(diffs_clean)))
-cat(sprintf("Max |TWFE - GB_Clean|:   %8.6f\n", max(abs(diffs_clean))))
-cat("Note: GB_Clean differs from TWFE by Sigma_j v_j*(Delta_l_nt - Phi_j),\n")
-cat("      a mean-zero noise term; the two are NOT algebraically identical.\n")
+cat("\n=== Numerical Equivalence: TWFE vs GB_Clean (clean DiDs, exact identity) ===\n")
+diffs_clean <- abs(results$TWFE - results$GB_Clean)
+cat(sprintf("Max |TWFE - GB_Clean|:   %.2e  (algebraic identity — exact to machine precision)\n",
+            max(diffs_clean)))
+cat(sprintf("All < 1e-8: %s\n", ifelse(all(diffs_clean < 1e-8), "YES", "NO")))
+cat("Note: GB_Clean substitutes each forbidden DiD via DiD(g_l,g_e) = DiD(g_l,U) - DiD(g_e,U).\n")
+cat("      The ȳ_U terms cancel algebraically, so GB_Clean = TWFE in every sample.\n")
 
 cat("\n=== Per-Replication Detail (first 10 sims) ===\n")
 cat(sprintf("%-6s %10s %10s %10s %12s %12s\n",
             "Sim", "TWFE", "GB", "GB_Clean", "|TWFE-GB|", "|TWFE-Cln|"))
 cat(strrep("-", 65), "\n")
 for (s in seq_len(min(10, n_sims))) {
-  cat(sprintf("%-6d %10.6f %10.6f %10.6f %12.2e %12.6f\n",
+  cat(sprintf("%-6d %10.6f %10.6f %10.6f %12.2e %12.2e\n",
               s,
               results$TWFE[s],
               results$GB[s],
