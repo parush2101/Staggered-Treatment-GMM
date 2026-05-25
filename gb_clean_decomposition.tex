@@ -67,6 +67,10 @@ expectation and TWFE is unbiased. Under heterogeneous effects, the same
 negative-weight terms are non-zero and constitute the exact source of TWFE's
 bias. The clean decomposition therefore does not remove bias; it exposes its
 structural origin and shows what an unbiased alternative must discard.
+Exploiting the redundancy result, we introduce a GMM estimator that uses only
+clean comparisons and achieves minimum asymptotic variance under arbitrary
+within-unit serial correlation by optimally weighting the moment covariance
+matrix.
 \end{abstract}
 
 \tableofcontents
@@ -930,6 +934,196 @@ weighting. Within the class of estimators that fix $m=1$, CS is the canonical
 representative. The efficiency cost of restricting to $m=1$ is borne whenever
 a cohort has more than one pre-treatment period.
 
+None of the three estimators exploits the covariance structure across clean
+moments induced by shared cohorts and within-unit serial correlation.
+Section~\ref{sec:gmm} develops a GMM framework that resolves this by combining
+all clean DiD moments with an optimal weighting matrix, achieving minimum
+asymptotic variance within the class of clean-DiD estimators.
+
+%%%============================================================================
+\section{A GMM Estimator Based on Clean Comparisons}
+\label{sec:gmm}
+%%%============================================================================
+
+The redundancy result (Corollary~\ref{cor:redundancy}) shows that all
+identifying information for $\theta$ is encoded in the clean $2\times2$
+DiDs. Every heterogeneity-robust estimator discussed in
+Section~\ref{sec:comparison} exploits this by restricting to clean
+comparisons, but each uses a fixed weighting scheme that ignores the
+covariance structure across moments induced by shared cohorts and
+serially correlated errors. We now build a GMM estimator that uses only
+clean comparisons and selects weights to minimise asymptotic variance.
+Throughout this section we maintain homogeneous effects
+($\beta_{g,g+k}=\theta$ for all $g,k$), under which every clean comparison
+identifies the same scalar $\theta$.
+
+\subsection{Moment Conditions}
+\label{sec:gmm_moments}
+
+The defining identity of a $2\times2$ DiD under the true parameter provides
+the moment conditions. For units $i\in g$ and $j\in c$ with $c$ clean
+(never-treated or not-yet-treated), the individual-level moment is
+\begin{equation}
+  \phi^{cm}_{g,g+k}
+  \;=\;
+  \bigl[(Y_{ig,g+k}-Y_{ig,g-m})-(Y_{jc,g+k}-Y_{jc,g-m})\bigr]
+  -\theta,
+  \label{eq:moment_indiv}
+\end{equation}
+with $\E[\phi^{cm}_{g,g+k}]=0$ under Assumptions~1--4 and homogeneous
+effects. The sample analog at the cohort level is
+\begin{equation}
+  \hat{\phi}^{cm}_{g,g+k}(\theta)
+  \;=\;
+  \hbeta^{cm}_{g,g+k} - \theta,
+  \qquad
+  \E\bigl[\hat{\phi}^{cm}_{g,g+k}(\theta)\bigr] = 0,
+  \label{eq:moment}
+\end{equation}
+for every clean pair $(g,c)$---i.e., $c=\infty$ (never-treated) or
+$c=g+l$, $l\in\{k+1,\ldots,T-g\}$ (not-yet-treated)---and all valid
+$(k,m)$. Let $N_c$ denote the total number of clean $2\times2$
+comparisons. Stacking all $N_c$ sample moments into a column vector,
+\begin{equation}
+  \hat{\phi}(\theta)
+  \;=\;
+  \Delta_c - \mathbf{1}_{N_c}\,\theta,
+  \label{eq:stacked}
+\end{equation}
+where $\Delta_c$ is the $N_c\times1$ vector of sample clean DiD estimates
+and $\mathbf{1}_{N_c}$ is the $N_c\times1$ vector of ones. The condition
+$\E[\hat{\phi}(\theta_0)]=\mathbf{0}$ holds at the true $\theta_0$.
+
+The vector $\mathbf{1}_{N_c}$ plays the role of the incidence matrix: it
+maps every clean comparison to the single scalar parameter $\theta$. Since
+$N_c>1$ generically, the system is over-identified, providing the
+information that GMM exploits to improve upon any single-comparison
+or fixed-weight estimator.
+
+\subsection{The GMM Estimator}
+\label{sec:gmm_estimator}
+
+The GMM estimator minimises the quadratic form of sample moments,
+\begin{equation}
+  \hat{\theta}_{\mathrm{GMM}}
+  \;=\;
+  \arg\min_{\theta}\;
+  \hat{\phi}(\theta)'\,A\,\hat{\phi}(\theta),
+  \label{eq:gmm_obj}
+\end{equation}
+where $A$ is an $N_c\times N_c$ positive semi-definite weighting matrix.
+Setting the first-order condition to zero gives the closed form
+\begin{equation}
+  \boxed{%
+    \hat{\theta}_{\mathrm{GMM}}
+    \;=\;
+    \bigl(\mathbf{1}_{N_c}'\,A\,\mathbf{1}_{N_c}\bigr)^{-1}
+    \mathbf{1}_{N_c}'\,A\,\Delta_c.
+  }
+  \label{eq:gmm}
+\end{equation}
+This is a \emph{weighted average of clean DiD estimates}: the effective weight
+on comparison $s$ is $(A\,\mathbf{1}_{N_c})_s / (\mathbf{1}_{N_c}'A\mathbf{1}_{N_c})$.
+Different choices of $A$ recover the estimators of
+Section~\ref{sec:comparison} as special cases (Section~\ref{sec:gmm_connection}).
+
+\subsection{Optimal Weighting and Efficiency}
+\label{sec:gmm_efficiency}
+
+By standard GMM theory (Hansen, 1982), the optimal weighting matrix
+satisfies $A\xrightarrow{p}\Omega_\phi^{-1}$, where
+\begin{equation}
+  \Omega_\phi
+  \;=\;
+  \lim_{N\to\infty}
+  \mathrm{Var}\!\bigl[\sqrt{N}\,\hat{\phi}(\theta_0)\bigr]
+  \;=\;
+  \lim_{N\to\infty} N\cdot\mathrm{Var}[\Delta_c]
+  \label{eq:omega}
+\end{equation}
+is the asymptotic variance--covariance matrix of the stacked clean DiD
+estimates. Substituting a consistent estimator $\hat{\Omega}_\phi$ for
+$\Omega_\phi$ gives the feasible optimal GMM estimator,
+\begin{equation}
+  \hat{\theta}_{\mathrm{GMM}}^{*}
+  \;=\;
+  \bigl(\mathbf{1}_{N_c}'\,\hat{\Omega}_\phi^{-1}\,\mathbf{1}_{N_c}\bigr)^{-1}
+  \mathbf{1}_{N_c}'\,\hat{\Omega}_\phi^{-1}\,\Delta_c.
+  \label{eq:opt_gmm}
+\end{equation}
+Among all estimators linear in $\Delta_c$ and unbiased for $\theta$,
+$\hat{\theta}_{\mathrm{GMM}}^{*}$ achieves the minimum asymptotic variance
+$(\mathbf{1}_{N_c}'\Omega_\phi^{-1}\mathbf{1}_{N_c})^{-1}$.
+
+\paragraph{Covariance structure of clean moments.}
+The matrix $\Omega_\phi$ has a transparent structure. Two clean
+comparisons $(g,c,k,m)$ and $(g',c',k',m')$ are correlated whenever they
+involve a common cohort: same focal cohort ($g=g'$), same control cohort
+($c=c'$), or one comparison's focal cohort is the other's control
+($g=c'$ or $c=g'$). Under within-unit serial correlation (Assumption~1),
+any outcome change contributed by a cohort to one moment is correlated with
+the same cohort's contribution elsewhere, propagating dependence across all
+moments that share that cohort.
+
+As an illustration, two never-treated DiDs $\hbeta^{\infty m}_{g,g+k}$ and
+$\hbeta^{\infty m}_{g,g+k'}$ at the same pre-lag $m$ but different post
+periods share the pre-period outcome $Y_{g,g-m}$ exactly, inducing a
+mechanical positive covariance. A diagonal $A$ ignores this and assigns
+equal marginal weight to both, even though they carry partly redundant
+information about the same pre-period. The optimal
+$A=\Omega_\phi^{-1}$ downweights this redundant pair and upweights
+comparisons that are more orthogonal, achieving the minimum-variance
+linear combination.
+
+\paragraph{Estimation of $\Omega_\phi$.}
+Since $\Omega_\phi$ is unknown in practice, it must be estimated. A
+non-parametric option is the sandwich (cluster-robust) variance estimator
+applied to the stacked moments, clustering at the unit level; this is
+consistent under Assumption~1 without a parametric model of serial
+dependence. If a parametric error structure (e.g.\ AR$(1)$) is assumed,
+closed-form expressions for the elements of $\Omega_\phi$ can be derived
+from the covariance structure of the clean moment conditions.
+
+\subsection{Connection to Earlier Estimators}
+\label{sec:gmm_connection}
+
+The GMM framework nests the estimators of
+Sections~\ref{sec:clean_gb} and~\ref{sec:comparison} as special cases of $A$.
+
+\paragraph{TWFE and clean GB.}
+By Theorem~\ref{thm:clean_gb}, TWFE equals a signed sum of clean DiDs.
+In the period-specific representation (Section~\ref{sec:period_specific}),
+the Group~(I) never-treated terms receive weight
+$\omega^{\mathrm{GB}}_{g,k,m}=w_{g\infty}/[(T-g+1)(g-1)]$
+(equation~\eqref{eq:ps_weight}). Setting $A$ diagonal with entries matching
+these weights for each clean comparison replicates the clean GB---and
+therefore TWFE---exactly. This diagonal $A$ ignores the off-diagonal
+covariance structure of $\Omega_\phi$ and is sub-optimal under serially
+correlated errors.
+
+\paragraph{Callaway--Sant'Anna.}
+CS restricts $\Delta_c$ to the $m=1$ subset of clean moments. Within
+the GMM framework, this is equivalent to zeroing all rows and columns
+of $A$ corresponding to comparisons with $m\geq2$, discarding their
+identifying information.
+
+\paragraph{Gardner.}
+Gardner forms the cell mean $\hbeta^G_{g,g+k}=(g-1)^{-1}
+\sum_m\hbeta^{\infty m}_{g,g+k}$ (equation~\eqref{eq:gardner_catt}) before
+aggregating with researcher-specified $(g,k)$ weights. This corresponds
+to a block structure in $A$ that places equal within-cell weight
+and applies the chosen $(g,k)$ weight for between-cell allocation, while
+ignoring cross-cell covariances.
+
+\paragraph{Optimal GMM.}
+Setting $A=\hat{\Omega}_\phi^{-1}$ allows the weighting to reflect the
+full serial covariance structure. Moments from the same focal cohort at
+adjacent post periods---which are highly correlated---receive less joint
+weight; moments from distinct cohorts, which are asymptotically independent
+under Assumption~1, can be combined at full strength. The result is the
+minimum-variance estimator within the class of linear, unbiased, clean-DiD
+estimators.
+
 %%%============================================================================
 \section{Discussion}
 \label{sec:discussion}
@@ -965,8 +1159,9 @@ formula~\eqref{eq:bias_formula} suggest a natural taxonomy:
     Section~\ref{sec:comparison} compares CS and Gardner in detail along the
     pre-lag and event-time dimensions of the period-specific representation.
 
-  \item \textbf{Optimal GMM}: assigns weights to clean moments that minimise
-    asymptotic variance by exploiting their serial covariance structure.
+  \item \textbf{Optimal GMM} (Section~\ref{sec:gmm}): assigns weights to
+    clean moments that minimise asymptotic variance by exploiting their serial
+    covariance structure via $A=\hat{\Omega}_\phi^{-1}$.
     Achieves efficiency within the class of unbiased estimators based on clean
     $2\times2$ DiDs, at the cost of estimating the moment covariance matrix.
 \end{itemize}
