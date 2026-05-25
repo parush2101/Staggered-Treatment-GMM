@@ -949,13 +949,21 @@ The redundancy result (Corollary~\ref{cor:redundancy}) shows that all
 identifying information for $\theta$ is encoded in the clean $2\times2$
 DiDs. Every heterogeneity-robust estimator discussed in
 Section~\ref{sec:comparison} exploits this by restricting to clean
-comparisons, but each uses a fixed weighting scheme that ignores the
-covariance structure across moments induced by shared cohorts and
-serially correlated errors. We now build a GMM estimator that uses only
-clean comparisons and selects weights to minimise asymptotic variance.
+comparisons, but each uses a fixed weighting scheme that leaves efficiency
+gains unrealised. We now build a GMM estimator that uses only clean
+comparisons and selects weights to minimise asymptotic variance.
 Throughout this section we maintain homogeneous effects
 ($\beta_{g,g+k}=\theta$ for all $g,k$), under which every clean comparison
 identifies the same scalar $\theta$.
+
+The efficiency analysis distinguishes two regimes. Under \emph{spherical
+errors}, the optimal weighting matrix has a specific block structure that
+is analytically tractable and recovers Gardner's estimator within each
+cohort-by-event-time cell (Section~\ref{sec:gmm_spherical}). Under
+\emph{non-spherical errors}---the empirically relevant case in panel
+data---within-unit serial correlation introduces richer off-diagonal
+covariance structure, and three analytically tractable
+special cases are derived in Section~\ref{sec:gmm_nonspherical}.
 
 \subsection{Moment Conditions}
 \label{sec:gmm_moments}
@@ -1027,102 +1035,304 @@ on comparison $s$ is $(A\,\mathbf{1}_{N_c})_s / (\mathbf{1}_{N_c}'A\mathbf{1}_{N
 Different choices of $A$ recover the estimators of
 Section~\ref{sec:comparison} as special cases (Section~\ref{sec:gmm_connection}).
 
-\subsection{Optimal Weighting and Efficiency}
-\label{sec:gmm_efficiency}
+\subsection{Efficiency under Spherical Errors}
+\label{sec:gmm_spherical}
 
-By standard GMM theory (Hansen, 1982), the optimal weighting matrix
-satisfies $A\xrightarrow{p}\Omega_\phi^{-1}$, where
+Under \emph{spherical errors}, $\mathrm{Var}[\varepsilon_{igt}]=\sigma^2$
+and $\mathrm{Cov}[\varepsilon_{igt},\varepsilon_{igt'}]=0$ for all $t\neq t'$.
+At the cohort level this implies $\mathrm{Var}[Y_{g,t}]=\sigma^2/N_g$ and
+$\mathrm{Cov}[Y_{g,t},Y_{g,t'}]=0$ for $t\neq t'$, with cohorts independent
+across $g$.
+
+\paragraph{Covariance structure.}
+Expanding the clean DiD $\hbeta^{cm}_{g,g+k}=(Y_{g,g+k}-Y_{g,g-m})-(Y_{c,g+k}-Y_{c,g-m})$
+and using cross-sectional and serial independence, the covariance between two
+clean comparisons sharing the same focal cohort ($g=g'$) and control ($c=c'$)
+is
+\begin{equation}
+  \mathrm{Cov}\!\bigl[\hbeta^{cm}_{g,g+k},\hbeta^{cm'}_{g,g+k'}\bigr]
+  \;=\;
+  \sigma^2\!\left(\frac{1}{N_g}+\frac{1}{N_c}\right)
+  \!\bigl(\mathbf{1}_{[k=k']}+\mathbf{1}_{[m=m']}\bigr),
+  \label{eq:cov_sph}
+\end{equation}
+where $\mathbf{1}_{[\cdot]}$ denotes the indicator. When both indices coincide
+($k=k'$, $m=m'$) this gives the variance $2\sigma^2(1/N_g+1/N_c)$.  For
+different focal cohorts ($g\neq g'$) sharing only the same never-treated
+control ($c=c'=\infty$), the covariance arises solely through shared
+never-treated outcomes:
+\begin{equation}
+  \mathrm{Cov}\!\bigl[\hbeta^{\infty m}_{g,g+k},\hbeta^{\infty m'}_{g',g'+k'}\bigr]
+  \;=\;
+  \frac{\sigma^2}{N_\infty}
+  \bigl(\mathbf{1}_{[g+k=g'+k']}+\mathbf{1}_{[g-m=g'-m']}\bigr).
+  \label{eq:cov_sph_cross}
+\end{equation}
+
+\paragraph{Exchangeable within-cell structure.}
+Fix cohort $g$ and event horizon $k$. The $g-1$ clean never-treated DiDs
+$\{\hbeta^{\infty m}_{g,g+k}\}_{m=1}^{g-1}$ all use the same post-period
+outcome $Y_{g,g+k}$; under spherical errors this creates a uniform pairwise
+covariance. Setting $v_{g,c}=\sigma^2(1/N_g+1/N_c)$, their
+$(g-1)\times(g-1)$ covariance matrix is
+\begin{equation}
+  \Sigma_{g,k}
+  \;=\;
+  v_{g,\infty}\bigl(I_{g-1}+\mathbf{1}_{g-1}\mathbf{1}_{g-1}'\bigr),
+  \label{eq:sigma_block}
+\end{equation}
+with every off-diagonal entry equal to $v_{g,\infty}$ (shared post-period)
+and every diagonal entry equal to $2v_{g,\infty}$. This is an
+\emph{exchangeable} (equicorrelated) structure.
+
+\begin{proposition}[Spherical-Error Optimality of Gardner's CATT Estimate]
+  \label{prop:gardner_opt}
+  Under spherical errors, the minimum-variance linear unbiased estimator
+  of $\beta_{g,g+k}$ from the clean never-treated DiDs
+  $\{\hbeta^{\infty m}_{g,g+k}\}_{m=1}^{g-1}$ is the equal-weighted average
+  \begin{equation}
+    \hbeta^{G}_{g,g+k}
+    \;=\;
+    \frac{1}{g-1}\sum_{m=1}^{g-1}\hbeta^{\infty m}_{g,g+k},
+    \label{eq:gardner_opt}
+  \end{equation}
+  the Gardner et al.\ (2024) CATT estimator.
+\end{proposition}
+
+\begin{proof}
+  The GLS estimator of the common mean from observations with covariance
+  $\Sigma_{g,k}$ in \eqref{eq:sigma_block} is
+  $\hat\theta^{*}=(\mathbf{1}'\Sigma_{g,k}^{-1}\mathbf{1})^{-1}
+  \mathbf{1}'\Sigma_{g,k}^{-1}\Delta_{g,k}$, where
+  $\Delta_{g,k}=(\hbeta^{\infty1}_{g,g+k},\ldots,\hbeta^{\infty,g-1}_{g,g+k})'$.
+  Applying the Sherman--Morrison formula to \eqref{eq:sigma_block},
+  \[
+    \Sigma_{g,k}^{-1}
+    \;=\;
+    \frac{1}{v_{g,\infty}}
+    \!\left(I_{g-1}-\frac{\mathbf{1}_{g-1}\mathbf{1}_{g-1}'}{g}\right)\!,
+  \]
+  so $\mathbf{1}'\Sigma_{g,k}^{-1}=v_{g,\infty}^{-1}\mathbf{1}'/g$ and
+  $\mathbf{1}'\Sigma_{g,k}^{-1}\mathbf{1}=(g-1)/(v_{g,\infty}g)$.
+  Substituting:
+  \[
+    \hat\theta^{*}
+    =
+    \frac{v_{g,\infty}^{-1}\mathbf{1}'\Delta_{g,k}/g}{(g-1)/(v_{g,\infty}g)}
+    =
+    \frac{\mathbf{1}'\Delta_{g,k}}{g-1}
+    =
+    \frac{1}{g-1}\sum_{m=1}^{g-1}\hbeta^{\infty m}_{g,g+k}
+    =\hbeta^{G}_{g,g+k}.\qedhere
+  \]
+\end{proof}
+
+The result has a clean intuition: under an exchangeable covariance
+structure the GLS estimator of a common mean equals the OLS (equal-weighted)
+average, because the uniform pairwise covariance cancels in the GLS formula.
+Spherical errors therefore provide no reason to downweight any particular
+pre-lag, and Gardner's equal-weighted average is the efficient choice.
+
+\begin{remark}
+  Proposition~\ref{prop:gardner_opt} characterises within-cell estimation.
+  The full optimal GMM for the scalar $\theta$ additionally exploits the
+  cross-cell covariances in \eqref{eq:cov_sph_cross}. The asymptotic
+  variance of $\hbeta^G_{g,g+k}$ under spherical errors is
+  $gv_{g,\infty}/(g-1)$, so the optimal cross-cell weight is proportional
+  to $(g-1)/[g\sigma^2(1/N_g+1/N_\infty)]$---a specific function of
+  cohort sizes and number of pre-treatment periods that neither CS nor
+  Gardner imposes.
+\end{remark}
+
+\subsection{Efficiency under Non-Spherical Errors}
+\label{sec:gmm_nonspherical}
+
+Under within-unit serial correlation, $\mathrm{Cov}[\varepsilon_{igt},
+\varepsilon_{igt'}]\neq0$ for $t\neq t'$, and the covariance structure of
+$\Delta_c$ is richer than \eqref{eq:cov_sph}--\eqref{eq:cov_sph_cross}.
+The equal-weighted within-cell average is no longer optimal, and the full
+inverse $\Omega_\phi^{-1}$ is required for efficient estimation. We derive
+$\Omega_\phi$ under three increasingly structured assumptions on the error
+process.
+
+\subsubsection{Arbitrary Serial Correlation}
+\label{sec:gmm_arbitrary}
+
+Without parametric restrictions on the serial dependence, the asymptotic
+moment covariance matrix is
 \begin{equation}
   \Omega_\phi
   \;=\;
   \lim_{N\to\infty}
   \mathrm{Var}\!\bigl[\sqrt{N}\,\hat{\phi}(\theta_0)\bigr]
   \;=\;
-  \lim_{N\to\infty} N\cdot\mathrm{Var}[\Delta_c]
+  \lim_{N\to\infty} N\cdot\mathrm{Var}[\Delta_c].
   \label{eq:omega}
 \end{equation}
-is the asymptotic variance--covariance matrix of the stacked clean DiD
-estimates. Substituting a consistent estimator $\hat{\Omega}_\phi$ for
-$\Omega_\phi$ gives the feasible optimal GMM estimator,
+Setting $A=\hat{\Omega}_\phi^{-1}$ for a consistent estimator
+$\hat{\Omega}_\phi$ gives the feasible optimal estimator
 \begin{equation}
   \hat{\theta}_{\mathrm{GMM}}^{*}
   \;=\;
   \bigl(\mathbf{1}_{N_c}'\,\hat{\Omega}_\phi^{-1}\,\mathbf{1}_{N_c}\bigr)^{-1}
-  \mathbf{1}_{N_c}'\,\hat{\Omega}_\phi^{-1}\,\Delta_c.
+  \mathbf{1}_{N_c}'\,\hat{\Omega}_\phi^{-1}\,\Delta_c,
   \label{eq:opt_gmm}
 \end{equation}
-Among all estimators linear in $\Delta_c$ and unbiased for $\theta$,
-$\hat{\theta}_{\mathrm{GMM}}^{*}$ achieves the minimum asymptotic variance
-$(\mathbf{1}_{N_c}'\Omega_\phi^{-1}\mathbf{1}_{N_c})^{-1}$.
+which achieves the minimum asymptotic variance
+$(\mathbf{1}_{N_c}'\Omega_\phi^{-1}\mathbf{1}_{N_c})^{-1}$
+among all linear unbiased estimators of $\theta$. Under
+Assumption~1, $\hat{\Omega}_\phi$ can be estimated non-parametrically
+by the cluster-robust sandwich variance estimator applied to the stacked
+moments $\hat{\phi}(\hat{\theta})$, clustering at the unit level.
 
-\paragraph{Covariance structure of clean moments.}
-The matrix $\Omega_\phi$ has a transparent structure. Two clean
-comparisons $(g,c,k,m)$ and $(g',c',k',m')$ are correlated whenever they
-involve a common cohort: same focal cohort ($g=g'$), same control cohort
-($c=c'$), or one comparison's focal cohort is the other's control
-($g=c'$ or $c=g'$). Under within-unit serial correlation (Assumption~1),
-any outcome change contributed by a cohort to one moment is correlated with
-the same cohort's contribution elsewhere, propagating dependence across all
-moments that share that cohort.
+\subsubsection{Toeplitz Structure with Homoskedasticity}
+\label{sec:gmm_toeplitz_homo}
 
-As an illustration, two never-treated DiDs $\hbeta^{\infty m}_{g,g+k}$ and
-$\hbeta^{\infty m}_{g,g+k'}$ at the same pre-lag $m$ but different post
-periods share the pre-period outcome $Y_{g,g-m}$ exactly, inducing a
-mechanical positive covariance. A diagonal $A$ ignores this and assigns
-equal marginal weight to both, even though they carry partly redundant
-information about the same pre-period. The optimal
-$A=\Omega_\phi^{-1}$ downweights this redundant pair and upweights
-comparisons that are more orthogonal, achieving the minimum-variance
-linear combination.
+A practically useful parametric restriction imposes time-stationarity and
+homoskedasticity: $\mathrm{Var}[Y_{igt}]=\sigma_0$ and
+$\mathrm{Cov}[Y_{igt},Y_{igt-r}]=\sigma_r$ for all $g,t$ and all $|r|\geq1$,
+with $\sigma_r=\sigma_0$ when $r=0$. This Toeplitz structure reduces the
+number of free parameters from $\binom{n+1}{2}$ (generic covariance)
+to $n$ (one autocovariance per lag).
 
-\paragraph{Estimation of $\Omega_\phi$.}
-Since $\Omega_\phi$ is unknown in practice, it must be estimated. A
-non-parametric option is the sandwich (cluster-robust) variance estimator
-applied to the stacked moments, clustering at the unit level; this is
-consistent under Assumption~1 without a parametric model of serial
-dependence. If a parametric error structure (e.g.\ AR$(1)$) is assumed,
-closed-form expressions for the elements of $\Omega_\phi$ can be derived
-from the covariance structure of the clean moment conditions.
+\paragraph{Diagonal elements.}
+For clean comparison $s=(g,c,k,m)$, let $d=k+m$ denote the calendar
+distance between its post-period $g+k$ and pre-period $g-m$. The variance
+is
+\begin{equation}
+  \mathrm{Var}\!\bigl[\hat\Delta^{s}_{g,g+k}\bigr]
+  \;=\;
+  \left(\frac{2}{N_g}+\frac{2}{N_c}\right)(\sigma_0-\sigma_d).
+  \label{eq:var_toeplitz}
+\end{equation}
+Under spherical errors ($\sigma_r=0$ for $r\geq1$, $\sigma_0=\sigma^2$),
+\eqref{eq:var_toeplitz} reduces to $2\sigma^2(1/N_g+1/N_c)$, consistent
+with Section~\ref{sec:gmm_spherical}.
+
+\paragraph{Off-diagonal elements.}
+For two clean comparisons $s=(g,c,k,m)$ and $s'=(g',c',k',m')$, define
+\begin{equation}
+  \rho(k,m,k',m')
+  \;\equiv\;
+  \sigma_{|k-k'|}-\sigma_{|k-m'|}-\sigma_{|m-k'|}+\sigma_{|m-m'|},
+  \label{eq:rho}
+\end{equation}
+where $|k-m'|=k+m'$ and $|m-k'|=m+k'$ are the calendar distances between
+the post-period of one comparison and the pre-period of the other
+(since $k\geq0$, $m\geq1$). The asymptotic off-diagonal entries of
+$\Omega_\phi$ (as $N\to\infty$ with $N_g/N\to p_g$ fixed) are:
+\begin{equation}
+  \lim_{N\to\infty}N\cdot\mathrm{Cov}\!\bigl[\hat\Delta^s,\hat\Delta^{s'}\bigr]
+  \;=\;
+  \begin{cases}
+    0
+    & g\neq g',\;c\neq c',\;\{g,c\}\cap\{g',c'\}=\emptyset,\\[6pt]
+    \phantom{+}\rho(k,m,k',m')
+    & g=g',\;c\neq c'\;\text{ or }\;g\neq g',\;c=c',\\[6pt]
+    -\rho(k,m,k',m')
+    & g'=c,\;g\neq c'\;\text{ (or symmetric)},\\[6pt]
+    2\,\rho(k,m,k',m')
+    & g=g',\;c=c'.
+  \end{cases}
+  \label{eq:cov_toeplitz}
+\end{equation}
+Three features are notable. First, comparisons involving entirely disjoint
+cohort sets are asymptotically uncorrelated: $\Omega_\phi$ is block-sparse.
+Second, sharing only the focal cohort (or only the control) contributes
+$\rho$; the factor doubles to $2\rho$ when both cohorts are shared, because
+both the focal and control outcome changes appear in both comparisons.
+Third, the cross-comparison ($g'=c$) case---where one comparison's focal
+cohort is the other's control---contributes $-\rho$, because the shared
+cohort enters with opposite signs in the two DiDs.
+
+Under spherical errors ($\sigma_r=0$ for $r\geq1$), $\rho(k,m,k',m')=
+\sigma_0(\mathbf{1}_{[k=k']}+\mathbf{1}_{[m=m']})$ for the same-cohort case,
+recovering \eqref{eq:cov_sph}--\eqref{eq:cov_sph_cross}.
+
+\paragraph{Estimation.}
+The parameters $\sigma_0$ and $\{\sigma_r\}_{r\geq1}$ are unknown. A
+consistent estimator can be obtained by running a first-stage TWFE regression,
+extracting unit-level residuals $\hat{\varepsilon}_{igt}$, and computing
+$\hat\sigma_r=(NT)^{-1}\sum_{i,t}\hat\varepsilon_{igt}\hat\varepsilon_{igt-r}$.
+Substituting into \eqref{eq:var_toeplitz}--\eqref{eq:cov_toeplitz} yields
+$\hat\Omega_\phi$.
+
+\subsubsection{Toeplitz Structure with Heteroskedasticity}
+\label{sec:gmm_toeplitz_hetero}
+
+Allowing the variance to vary across cohort-time cells while keeping the
+autocovariance structure stationary:
+$\mathrm{Var}[Y_{igt}]=\sigma_{g,t}^{2}$ and
+$\mathrm{Cov}[Y_{igt},Y_{igt-r}]=\sigma_r$ for all $r\geq1$. This extends
+the number of variance parameters from one ($\sigma_0$) to $GT$ (one per
+cohort-time cell) while leaving the $n$ autocovariance parameters
+$\{\sigma_r\}_{r\geq1}$ unchanged, raising the total parameter count from
+$n$ to $2n-1$.
+
+\paragraph{Diagonal elements.}
+For comparison $s=(g,c,k,m)$ with calendar distance $d=k+m$:
+\begin{equation}
+  \mathrm{Var}\!\bigl[\hat\Delta^{s}_{g,g+k}\bigr]
+  \;=\;
+  \frac{\sigma^{2}_{g,g+k}+\sigma^{2}_{g,g-m}-2\sigma_d}{N_g}
+  +
+  \frac{\sigma^{2}_{c,g+k}+\sigma^{2}_{c,g-m}-2\sigma_d}{N_c}.
+  \label{eq:var_hetero}
+\end{equation}
+Under homoskedasticity ($\sigma^2_{g,t}=\sigma_0$ for all $g,t$),
+\eqref{eq:var_hetero} reduces to \eqref{eq:var_toeplitz}. The off-diagonal
+structure is unchanged: the asymptotic covariances take the same
+form~\eqref{eq:cov_toeplitz} with $\rho(k,m,k',m')$ as defined in
+\eqref{eq:rho}, because autocovariances depend only on the lag.
+
+\paragraph{Practical trade-off.}
+Heteroskedasticity raises the estimation cost: $\sigma_{g,t}^2$ must be
+estimated for each cohort-time pair, introducing $GT-1$ additional nuisance
+parameters. In finite samples the additional estimation uncertainty may
+offset the efficiency gains from correctly specifying the variance structure.
+In practice, the homoskedastic Toeplitz specification of
+Section~\ref{sec:gmm_toeplitz_homo} offers a favourable bias-variance
+trade-off for moderate $T$ and $G$.
 
 \subsection{Connection to Earlier Estimators}
 \label{sec:gmm_connection}
 
-The GMM framework nests the estimators of
-Sections~\ref{sec:clean_gb} and~\ref{sec:comparison} as special cases of $A$.
+The weighting matrix $A$ in \eqref{eq:gmm} nests the estimators of
+Sections~\ref{sec:clean_gb} and~\ref{sec:comparison} as special cases.
 
 \paragraph{TWFE and clean GB.}
-By Theorem~\ref{thm:clean_gb}, TWFE equals a signed sum of clean DiDs.
 In the period-specific representation (Section~\ref{sec:period_specific}),
 the Group~(I) never-treated terms receive weight
 $\omega^{\mathrm{GB}}_{g,k,m}=w_{g\infty}/[(T-g+1)(g-1)]$
-(equation~\eqref{eq:ps_weight}). Setting $A$ diagonal with entries matching
-these weights for each clean comparison replicates the clean GB---and
-therefore TWFE---exactly. This diagonal $A$ ignores the off-diagonal
-covariance structure of $\Omega_\phi$ and is sub-optimal under serially
-correlated errors.
+(equation~\eqref{eq:ps_weight}). Setting $A$ diagonal with these entries
+replicates TWFE exactly (Theorem~\ref{thm:clean_gb}). Under spherical errors,
+this diagonal $A$ is sub-optimal: Proposition~\ref{prop:gardner_opt}
+implies that within each $(g,k)$ cell the minimum-variance weight is the
+equal weight $1/(g-1)$, not the GB variance weight.
 
 \paragraph{Callaway--Sant'Anna.}
-CS restricts $\Delta_c$ to the $m=1$ subset of clean moments. Within
-the GMM framework, this is equivalent to zeroing all rows and columns
-of $A$ corresponding to comparisons with $m\geq2$, discarding their
-identifying information.
+CS restricts $\Delta_c$ to the $m=1$ subset, equivalent to zeroing all rows
+and columns of $A$ for comparisons with $m\geq2$, discarding the efficiency
+gains from additional pre-period moments.
 
 \paragraph{Gardner.}
-Gardner forms the cell mean $\hbeta^G_{g,g+k}=(g-1)^{-1}
-\sum_m\hbeta^{\infty m}_{g,g+k}$ (equation~\eqref{eq:gardner_catt}) before
-aggregating with researcher-specified $(g,k)$ weights. This corresponds
-to a block structure in $A$ that places equal within-cell weight
-and applies the chosen $(g,k)$ weight for between-cell allocation, while
-ignoring cross-cell covariances.
+Gardner's CATT estimator $\hbeta^G_{g,g+k}=(g-1)^{-1}\sum_m
+\hbeta^{\infty m}_{g,g+k}$ (equation~\eqref{eq:gardner_catt}) is the
+minimum-variance within-cell estimator under spherical errors
+(Proposition~\ref{prop:gardner_opt}). It corresponds to a block-equal
+within-cell structure in $A$ with researcher-specified between-cell weights,
+and ignores cross-cell covariances. Under non-spherical errors, the
+equal within-cell weighting is no longer optimal and $\Omega_\phi^{-1}$
+reallocates weight across pre-lags to exploit the serial covariance
+structure.
 
 \paragraph{Optimal GMM.}
-Setting $A=\hat{\Omega}_\phi^{-1}$ allows the weighting to reflect the
-full serial covariance structure. Moments from the same focal cohort at
-adjacent post periods---which are highly correlated---receive less joint
-weight; moments from distinct cohorts, which are asymptotically independent
-under Assumption~1, can be combined at full strength. The result is the
-minimum-variance estimator within the class of linear, unbiased, clean-DiD
-estimators.
+Setting $A=\hat{\Omega}_\phi^{-1}$ from any of the three structures in
+Section~\ref{sec:gmm_nonspherical} exploits the full covariance of the
+clean moments. Compared with Gardner, efficiency gains are concentrated
+in cohorts with many pre-treatment periods and in panels with high serial
+persistence, where different pre-lags carry substantially different
+orthogonal information about the same CATT.
 
 %%%============================================================================
 \section{Discussion}
