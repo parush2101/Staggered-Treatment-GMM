@@ -28,11 +28,10 @@
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\bY}{\bar{Y}}
 \newcommand{\TWFE}{\hat{\theta}_{\mathrm{TWFE}}}
-\newcommand{\Mint}{\mathcal{M}}
-\newcommand{\Post}{\mathcal{P}}
 \newcommand{\Tpre}{\mathcal{T}^{\mathrm{pre}}}
 \newcommand{\Tpost}{\mathcal{T}^{\mathrm{post}}}
 \newcommand{\hbeta}{\hat{\beta}}
+\newcommand{\hpsi}{\hat{\psi}}     % never-treated DiD for already-treated focal
 \newcommand{\hdelta}{\hat{\delta}}
 \newcommand{\hDelta}{\hat{\Delta}}
 
@@ -53,17 +52,21 @@ The Goodman--Bacon (2021) decomposition shows that the two-way fixed effects
 (TWFE) estimator is a weighted average of \emph{all} pairwise $2\times 2$
 difference-in-differences (DiD) comparisons, including \emph{forbidden} ones
 that use already-treated cohorts as controls. We prove a sample-level
-algebraic identity: every forbidden DiD equals the difference of two
-never-treated DiDs computed over the same time window, with the never-treated
-terms cancelling exactly. This identity implies that forbidden comparisons are
-\emph{redundant}---they contain no information beyond what is already encoded
+algebraic identity: every forbidden comparison---which uses an already-treated
+control cohort---equals the difference of two never-treated comparisons
+evaluated at the same calendar periods, with the never-treated terms cancelling
+exactly. This identity implies that forbidden comparisons are
+\emph{redundant}: they contain no information beyond what is already encoded
 in the clean comparisons. Exploiting the identity, we derive a \emph{clean
 Goodman--Bacon decomposition} that represents TWFE as a signed weighted sum of
 clean DiDs alone, recovering TWFE exactly (to machine precision) in every
 sample. We characterise the new effective weights and show that already-treated
-cohorts enter with \emph{negative} effective weight, exposing the structural
-mechanism through which TWFE becomes biased and less efficient under
-heterogeneous treatment effects.
+cohorts enter with \emph{negative} effective weight. Under homogeneous,
+time-constant treatment effects, the negative-weight terms vanish in
+expectation and TWFE is unbiased. Under heterogeneous effects, the same
+negative-weight terms are non-zero and constitute the exact source of TWFE's
+bias. The clean decomposition therefore does not remove bias; it exposes its
+structural origin and shows what an unbiased alternative must discard.
 \end{abstract}
 
 \tableofcontents
@@ -141,8 +144,9 @@ observations. The TWFE regression
   Y_{igt} = \alpha_i + \lambda_t + \theta\,D_{it} + \varepsilon_{it}
   \label{eq:twfe}
 \end{equation}
-produces a consistent estimator of $\theta$ only when CATTs are homogeneous
-across all $(g,t)$ cells. Under heterogeneous CATTs, $\TWFE$ is generally biased.
+produces a consistent estimator of $\theta$ when CATTs are homogeneous across
+all $(g,t)$ cells. Under heterogeneous CATTs, $\TWFE$ is generally biased, as
+we analyse in detail in Section~\ref{sec:hetero}.
 
 %%%============================================================================
 \section{Two-by-Two DiD Comparisons}
@@ -158,8 +162,7 @@ The sample $2\times2$ DiD is
   (Y_{g,g+k}-Y_{g,g-m})-(Y_{c,g+k}-Y_{c,g-m}).
   \label{eq:2x2}
 \end{equation}
-Three types of control cohort arise in the staggered design, leading to the
-following classification.
+Three types of control cohort arise in the staggered design.
 
 \begin{definition}[Clean and Forbidden Comparisons]
   \label{def:types}
@@ -179,35 +182,40 @@ following classification.
         = (Y_{g,g+k}-Y_{g,g-m})-(Y_{g+l,g+k}-Y_{g+l,g-m}).
       \]
     \item \textbf{Already-treated} (\emph{forbidden}, $c=g-j$,
-      $j\in\{m+1,\ldots,g-1\}$): the control cohort has been treated for at
-      least $j-m>0$ periods before the pre-period reference date $g-m$,
+      $j\in\{m+1,\ldots,g-1\}$): the control cohort's treatment date $g-j$
+      strictly precedes the pre-period reference date $g-m$, so the control
+      group is treated throughout both the pre- and post-windows of the
+      comparison,
       \[
         \hbeta^{jm}_{g,g+k}
         = (Y_{g,g+k}-Y_{g,g-m})-(Y_{g-j,g+k}-Y_{g-j,g-m}).
       \]
   \end{enumerate}
-  The restriction $j>m$ ensures the already-treated control's first treatment
-  date $g-j$ strictly precedes the pre-period reference date $g-m$, so the
-  control group is treated throughout both the pre- and post-windows of the
-  comparison.
 \end{definition}
 
-Under Assumptions~1--4, all three types satisfy
-$\E[\hbeta^{cm}_{g,g+k}]=\beta_{g,g+k}$ when CATTs are homogeneous. Under
-heterogeneous CATTs, however, the expected value of the forbidden comparison
-is
+\paragraph{Identification under homogeneous effects.}
+When CATTs are homogeneous ($\beta_{g,g+k}=\theta$ for all $g,k$), all three
+types of $2\times2$ DiD satisfy $\E[\hbeta^{cm}_{g,g+k}]=\theta$ under
+Assumptions~1--4. The sections that follow (Sections~\ref{sec:gb}--\ref{sec:clean_gb})
+establish algebraic results---the Goodman-Bacon decomposition and the clean
+re-expression of TWFE---that hold regardless of whether effects are
+homogeneous or heterogeneous. Section~\ref{sec:hetero} then analyses what
+these results imply when CATTs are heterogeneous.
+
+\paragraph{Bias of the forbidden comparison under heterogeneous effects.}
+When CATTs are heterogeneous, the expected value of the forbidden comparison is
 \begin{equation}
   \E\bigl[\hbeta^{jm}_{g,g+k}\bigr]
   \;=\;
   \beta_{g,g+k}
-  - \bigl(\beta_{g-j,\,g+k} - \beta_{g-j,\,g-m}\bigr),
+  - \bigl(\beta_{g-j,\,g+k} - \beta_{g-j,\,g-m}\bigr).
   \label{eq:bias}
 \end{equation}
-so the bias equals the change in the control cohort's own CATT between the
-pre- and post-periods. Clean comparisons do not suffer this contamination
-because $\beta_{c,t}=0$ for all $t$ when $c=\infty$, and $\beta_{c,t}=0$
-for $t<c$ when $c=g+l$ (the not-yet-treated control has not yet been exposed
-to treatment).
+The bias equals the change in the already-treated control cohort's own CATT
+between the pre- and post-periods of the comparison. Clean comparisons do not
+suffer this contamination: $\beta_{\infty,t}=0$ for all $t$, and
+$\beta_{g+l,\,g+k}=0$ because the not-yet-treated control is untreated at
+$g+k$.
 
 %%%============================================================================
 \section{The Goodman--Bacon Decomposition}
@@ -215,15 +223,16 @@ to treatment).
 %%%============================================================================
 
 Goodman-Bacon (2021) establishes that $\TWFE$ is a weighted average of all
-pairwise $2\times2$ DiDs that can be formed from the panel data. To state the
-decomposition precisely, we define aggregate DiD objects that average outcomes
-over entire time windows.
+pairwise $2\times2$ DiDs that can be formed from the panel. To state the
+decomposition we use window-averaged DiD objects, as in the original theorem.
 
 \subsection*{Aggregate DiD objects}
 
 For each treated cohort $g$, let $\Tpost_g=\{g,g+1,\ldots,T\}$ and
-$\Tpre_g=\{1,2,\ldots,g-1\}$ denote its full post- and pre-treatment calendar
-periods. The \textbf{treated-vs-never-treated DiD} is
+$\Tpre_g=\{1,2,\ldots,g-1\}$ denote its post- and pre-treatment calendar
+periods. The \textbf{treated-vs-never-treated DiD} averages the focal cohort's
+outcome over its full post-treatment window and the pre-treatment window,
+using never-treated as control:
 \begin{equation}
   \hDelta_{g,\infty}
   \;=\;
@@ -232,29 +241,27 @@ periods. The \textbf{treated-vs-never-treated DiD} is
   \label{eq:did_nt}
 \end{equation}
 
-For an early--late pair $(g_e,g_l)$ with $g_e<g_l$, define the
-\emph{mid-period} $\Mint_{el}=\{g_e,\ldots,g_l-1\}$ (cohort $g_e$ is treated,
-$g_l$ is not yet treated) and the \emph{post-period}
-$\Post_{el}=\{g_l,\ldots,T\}$ (both cohorts are treated). Two $2\times2$ DiDs
-arise from this pair:
-\begin{align}
+For each early--late pair $(g_e,g_l)$ with $g_e<g_l$, two aggregate $2\times2$
+DiDs arise. The \textbf{``Earlier vs.\ Later Treated''} comparison uses $g_l$ as
+a not-yet-treated control and is clean:
+\begin{equation}
   \hDelta_{g_e,g_l}^{E}
-  &\;=\;
-  (\bY_{g_e,\Mint_{el}}-\bY_{g_e,\Tpre_{g_e}})
-  -(\bY_{g_l,\Mint_{el}}-\bY_{g_l,\Tpre_{g_e}}),
+  \;=\;
+  (\bY_{g_e,\,\{g_e,\ldots,g_l-1\}}-\bY_{g_e,\Tpre_{g_e}})
+  -(\bY_{g_l,\,\{g_e,\ldots,g_l-1\}}-\bY_{g_l,\Tpre_{g_e}}).
   \label{eq:did_early}
-  \\[4pt]
+\end{equation}
+The \textbf{``Later vs.\ Earlier Treated''} comparison uses $g_e$ as an
+already-treated control and is forbidden:
+\begin{equation}
   \hDelta_{g_l,g_e}^{F}
-  &\;=\;
-  (\bY_{g_l,\Post_{el}}-\bY_{g_l,\Mint_{el}})
-  -(\bY_{g_e,\Post_{el}}-\bY_{g_e,\Mint_{el}}).
+  \;=\;
+  (\bY_{g_l,\,\{g_l,\ldots,T\}}-\bY_{g_l,\,\{g_e,\ldots,g_l-1\}})
+  -(\bY_{g_e,\,\{g_l,\ldots,T\}}-\bY_{g_e,\,\{g_e,\ldots,g_l-1\}}).
   \label{eq:did_forbidden}
-\end{align}
-The superscript $E$ (``Earlier vs.\ Later Treated'') denotes the clean
-comparison: $g_l$ is not yet treated during $\Mint_{el}$, so it is a valid
-control. The superscript $F$ (``Later vs.\ Earlier Treated'') denotes the
-forbidden comparison: $g_e$ is already treated throughout both $\Mint_{el}$
-and $\Post_{el}$, so it is a contaminated control.
+\end{equation}
+In $\hDelta_{g_l,g_e}^F$, cohort $g_e$ serves as control despite being fully
+treated in both the pre- and post-periods of the comparison for $g_l$.
 
 \subsection*{The decomposition}
 
@@ -282,120 +289,125 @@ and $\Post_{el}$, so it is a contaminated control.
   \]
   The weights depend on cohort sizes and treatment timing. For the
   treated-vs-never-treated term,
-  \begin{equation}
+  \[
     w_{g\infty}
     \;\propto\;
     N_g N_\infty \cdot
-    \frac{|\Tpost_g|\cdot|\Tpre_g|}{T^2},
-    \label{eq:wgt_nt}
-  \end{equation}
-  where $|\mathcal{S}|$ denotes the number of periods in set $\mathcal{S}$.
-  The cohort-pair weights $w_{g_e g_l}^{E}$ and $w_{g_l g_e}^{F}$ are
-  similarly proportional to the product of sub-panel sizes and the within-panel
-  variance of the treatment indicator; see Goodman-Bacon (2021, Theorem~1) for
-  explicit formulas.
+    \frac{|\Tpost_g|\cdot|\Tpre_g|}{T^2};
+  \]
+  see Goodman-Bacon (2021, Theorem~1) for the full weight formulas.
 \end{theorem}
 
-The decomposition makes explicit the implicit weighting that TWFE performs.
-Crucially, the forbidden DiDs $\hDelta_{g_l,g_e}^{F}$ receive strictly positive
-weight $w_{g_l g_e}^{F}>0$ whenever the panel contains both cohorts. Thus
-TWFE genuinely relies on already-treated controls, and under heterogeneous
-CATTs this induces bias via \eqref{eq:bias}.
+\noindent
+All weights are non-negative and TWFE genuinely relies on the forbidden DiDs
+$\hDelta_{g_l,g_e}^F$, which receive strictly positive weight $w_{g_l g_e}^F>0$.
+Under homogeneous effects this is harmless. Under heterogeneous CATTs it
+induces bias via \eqref{eq:bias}, as we show in Section~\ref{sec:hetero}.
 
 %%%============================================================================
 \section{Redundancy of Forbidden Comparisons}
 \label{sec:redundancy}
 %%%============================================================================
 
-We now establish the central result of this note. Every forbidden DiD is an
-\emph{exact algebraic function} of two clean never-treated DiDs computed over
-the same time window. The identity is a sample-level fact---it holds in every
-realisation of the data, not merely in expectation.
+We now prove the key algebraic result. Every forbidden comparison---which uses
+an already-treated cohort as control---equals the difference of two
+never-treated comparisons evaluated at the same calendar periods. The identity
+is a sample-level fact, independent of any assumption about the homogeneity or
+heterogeneity of treatment effects.
 
-\begin{lemma}[Algebraic Identity for Forbidden DiDs]
+\begin{lemma}[Algebraic Identity for Forbidden Comparisons]
   \label{lem:identity}
-  Let $(g_e,g_l)$ be any early--late pair with $g_e<g_l$ and let
-  $\Mint_{el}=\{g_e,\ldots,g_l-1\}$ and $\Post_{el}=\{g_l,\ldots,T\}$ be the
-  mid- and post-periods defined in Section~\ref{sec:gb}. Define the
-  \emph{window-specific never-treated DiD} for cohort $g\in\{g_e,g_l\}$:
+  Consider any forbidden comparison $\hbeta^{jm}_{g_l,g_l+k}$ with
+  already-treated control cohort $g_e = g_l - j$, post calendar period
+  $g_l + k$, and pre calendar period $g_l - m$. Define the
+  \emph{co-period never-treated DiD} for the already-treated cohort $g_e$:
   \begin{equation}
-    \hdelta_{g,\infty}^{el}
+    \hpsi^{\infty m}_{g_e,\,g_l+k}
     \;\equiv\;
-    (\bY_{g,\Post_{el}}-\bY_{g,\Mint_{el}})
-    -(\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}}).
-    \label{eq:window_did}
+    (Y_{g_e,\,g_l+k} - Y_{g_e,\,g_l-m})
+    - (Y_{\infty,\,g_l+k} - Y_{\infty,\,g_l-m}),
+    \label{eq:copd}
   \end{equation}
+  which is a never-treated DiD for focal cohort $g_e$ using the \emph{same
+  calendar periods} $(g_l+k,\,g_l-m)$ as the forbidden comparison.
   Then the following algebraic identity holds in every finite sample:
   \begin{equation}
     \boxed{%
-      \hDelta_{g_l,g_e}^{F}
+      \hbeta^{jm}_{g_l,\,g_l+k}
       \;=\;
-      \hdelta_{g_l,\infty}^{el}
+      \hbeta^{\infty m}_{g_l,\,g_l+k}
       \;-\;
-      \hdelta_{g_e,\infty}^{el}.
+      \hpsi^{\infty m}_{g_e,\,g_l+k}.
     }
     \label{eq:identity}
   \end{equation}
 \end{lemma}
 
 \begin{proof}
-  Expand the right-hand side directly:
+  Expand both never-treated DiDs on the right-hand side and subtract:
   \begin{align*}
-    \hdelta_{g_l,\infty}^{el}-\hdelta_{g_e,\infty}^{el}
+    \hbeta^{\infty m}_{g_l,g_l+k} - \hpsi^{\infty m}_{g_e,g_l+k}
     &\;=\;
-    \Bigl[(\bY_{g_l,\Post_{el}}-\bY_{g_l,\Mint_{el}})
-          -(\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}})\Bigr]
+    \bigl[(Y_{g_l,g_l+k}-Y_{g_l,g_l-m})-(Y_{\infty,g_l+k}-Y_{\infty,g_l-m})\bigr]
     \\
     &\quad
-    -\Bigl[(\bY_{g_e,\Post_{el}}-\bY_{g_e,\Mint_{el}})
-           -(\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}})\Bigr]
+    -\bigl[(Y_{g_e,g_l+k}-Y_{g_e,g_l-m})-(Y_{\infty,g_l+k}-Y_{\infty,g_l-m})\bigr]
     \\
     &\;=\;
-    (\bY_{g_l,\Post_{el}}-\bY_{g_l,\Mint_{el}})
-    -(\bY_{g_e,\Post_{el}}-\bY_{g_e,\Mint_{el}})
+    (Y_{g_l,g_l+k}-Y_{g_l,g_l-m})-(Y_{g_e,g_l+k}-Y_{g_e,g_l-m})
     \\
     &\quad
-    +\underbrace{%
-      (\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}})
-      -(\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}})
-    }_{=\;0}
+    +\underbrace{(Y_{\infty,g_l+k}-Y_{\infty,g_l-m})-(Y_{\infty,g_l+k}-Y_{\infty,g_l-m})}_{=\;0}
     \\
     &\;=\;
-    (\bY_{g_l,\Post_{el}}-\bY_{g_l,\Mint_{el}})
-    -(\bY_{g_e,\Post_{el}}-\bY_{g_e,\Mint_{el}})
-    \;=\;\hDelta_{g_l,g_e}^{F},
+    (Y_{g_l,g_l+k}-Y_{g_l,g_l-m})-(Y_{g_e,g_l+k}-Y_{g_e,g_l-m})
+    \;=\;
+    \hbeta^{jm}_{g_l,g_l+k},
   \end{align*}
-  where the last equality follows from definition \eqref{eq:did_forbidden}.
-  The never-treated terms $\bY_{\infty,\Post_{el}}-\bY_{\infty,\Mint_{el}}$
-  cancel \emph{exactly} in every sample because they appear with opposite signs.
-  No approximation, probability limit, or expectation is invoked.
+  where the last equality uses Definition~\ref{def:types}(3) with $g_e=g_l-j$.
+  The never-treated outcomes cancel \emph{exactly} in every sample because they
+  appear with opposite signs. No approximation or probability limit is used.
 \end{proof}
 
 \begin{remark}
-  The identity \eqref{eq:identity} has a transparent interpretation. A
-  forbidden DiD compares the outcome change of $g_l$ against that of $g_e$
-  over the window $[\Mint_{el},\Post_{el}]$. Each cohort's outcome change
-  relative to the never-treated group constitutes a valid clean DiD
-  ($\hdelta_{g_l,\infty}^{el}$ and $\hdelta_{g_e,\infty}^{el}$, respectively).
-  Taking their difference eliminates the common never-treated trend, leaving
-  precisely the cross-cohort comparison that defines the forbidden DiD. The
-  cancellation is algebraic---not statistical---because the never-treated
-  group enters symmetrically in both terms.
+  The identity \eqref{eq:identity} has a transparent control-group
+  interpretation. The forbidden comparison $\hbeta^{jm}_{g_l,g_l+k}$ measures
+  the change in $g_l$'s outcome relative to the change in $g_e$'s outcome
+  between the same two calendar periods. We can equivalently measure each
+  cohort's outcome change relative to the \emph{never-treated} group as a
+  common benchmark, and then take the difference. The never-treated benchmark
+  cancels because it enters with the same sign in both terms.
+
+  The crucial distinction between the two terms on the right-hand side of
+  \eqref{eq:identity} is the treatment status of the \emph{focal} cohort at the
+  pre-period $g_l - m$:
+  \begin{itemize}
+    \item $\hbeta^{\infty m}_{g_l,g_l+k}$: focal cohort $g_l$ is
+      \emph{untreated} at $g_l - m$ (since $m \geq 1$). This is a valid clean
+      pre-treatment vs.\ post-treatment comparison for $g_l$.
+    \item $\hpsi^{\infty m}_{g_e,g_l+k}$: focal cohort $g_e$ is
+      \emph{already treated} at $g_l - m$ (since $j > m$ implies
+      $g_e = g_l - j < g_l - m$). The control group is clean (never-treated),
+      but the comparison spans two \emph{post-treatment} periods for $g_e$.
+      This term does not identify $g_e$'s treatment effect; it measures the
+      \emph{change} in $g_e$'s treatment effect across the two periods.
+  \end{itemize}
 \end{remark}
 
 \begin{corollary}[Redundancy of Forbidden Comparisons]
   \label{cor:redundancy}
-  Every forbidden DiD $\hDelta_{g_l,g_e}^{F}$ lies in the linear span of
-  the clean never-treated DiDs
-  $\{\hdelta_{g,\infty}^{el}:g\in\{g_l,g_e\}\}$. Consequently:
+  Every forbidden comparison $\hbeta^{jm}_{g_l,g_l+k}$ lies in the linear
+  span of $\{\hbeta^{\infty m}_{g_l,g_l+k},\,\hpsi^{\infty m}_{g_e,g_l+k}\}$.
+  Consequently:
   \begin{enumerate}
     \item Forbidden comparisons carry no identifying information for the CATTs
-      beyond what the clean comparisons already contain.
-    \item Dropping the forbidden comparisons from the moment set does not
-      reduce the information available for estimating $\theta$; it only
-      changes the weights placed on the available information.
-    \item The GB decomposition can be rewritten as an exact weighted sum of
-      clean DiDs alone (Theorem~\ref{thm:clean_gb} below).
+      beyond what the never-treated and not-yet-treated comparisons already
+      contain.
+    \item Dropping the already-treated control comparisons from the moment set
+      does not reduce the information available for estimating $\theta$; it
+      only changes the weights placed on the available information.
+    \item The GB decomposition can be rewritten as an exact signed weighted sum
+      of clean DiDs alone (Theorem~\ref{thm:clean_gb}).
   \end{enumerate}
 \end{corollary}
 
@@ -404,15 +416,15 @@ realisation of the data, not merely in expectation.
 \label{sec:clean_gb}
 %%%============================================================================
 
-We apply Lemma~\ref{lem:identity} to every forbidden term in the GB
-decomposition \eqref{eq:gb}, replacing each $\hDelta_{g_l,g_e}^{F}$ with
-$\hdelta_{g_l,\infty}^{el}-\hdelta_{g_e,\infty}^{el}$. This substitution is
-exact and produces a representation of TWFE that involves \emph{only} clean
-DiDs.
+We apply Lemma~\ref{lem:identity} to every forbidden term in \eqref{eq:gb},
+replacing each $\hDelta_{g_l,g_e}^{F}$ with the corresponding difference of
+never-treated DiDs. This yields an exact representation of TWFE that involves
+only comparisons against never-treated or not-yet-treated control cohorts.
 
 \begin{theorem}[Clean Goodman--Bacon Decomposition]
   \label{thm:clean_gb}
-  Under Assumptions~1--2, the TWFE estimator satisfies
+  Under Assumptions~1--2, applying the identity \eqref{eq:identity} to every
+  forbidden term in the Goodman-Bacon decomposition \eqref{eq:gb} yields
   \begin{equation}
     \TWFE
     \;=\;
@@ -422,128 +434,258 @@ DiDs.
     }_{\text{(I) original clean terms}}
     +
     \underbrace{%
-      \sum_{g_e<g_l}w_{g_l g_e}^{F}\,\hdelta_{g_l,\infty}^{el}
+      \sum_{j\in\mathcal{F}}v_j\,\hbeta^{\infty m_j}_{g_l^j,\,g_l^j+k_j}
     }_{\text{(II) positive substituted terms}}
     -
     \underbrace{%
-      \sum_{g_e<g_l}w_{g_l g_e}^{F}\,\hdelta_{g_e,\infty}^{el}
+      \sum_{j\in\mathcal{F}}v_j\,\hpsi^{\infty m_j}_{g_e^j,\,g_l^j+k_j}
     }_{\text{(III) negative substituted terms}},
     \label{eq:clean_gb_raw}
   \end{equation}
-  where every DiD on the right-hand side is clean (uses the never-treated group
-  or a not-yet-treated cohort as control). The identity holds to machine
-  precision in every finite sample.
-
-  \medskip\noindent
-  Collecting terms by cohort--window pair $(g,el)$, define the
-  \emph{effective weight} on $\hdelta_{g,\infty}^{el}$ as
-  \begin{equation}
-    \tilde{w}_{g,el}
-    \;=\;
-    \sum_{\substack{j\in\mathcal{F}\\g_l^j=g}}\!\!v_j
-    \;-\;
-    \sum_{\substack{j\in\mathcal{F}\\g_e^j=g}}\!\!v_j,
-    \label{eq:eff_wgt}
-  \end{equation}
-  where $v_j\equiv w_{g_l^j g_e^j}^{F}$ is the GB weight on forbidden pair
-  $j$, $\mathcal{F}$ indexes all forbidden pairs, and the first (second) sum
-  runs over pairs in which cohort $g$ plays the role of the later-treated
-  (earlier-treated) cohort. The clean decomposition is then
-  \begin{equation}
-    \TWFE
-    \;=\;
-    \sum_{g\neq\infty}w_{g\infty}\,\hDelta_{g,\infty}
-    +\sum_{g_e<g_l}w_{g_e g_l}^{E}\,\hDelta_{g_e,g_l}^{E}
-    +\sum_{(g,el)}\tilde{w}_{g,el}\,\hdelta_{g,\infty}^{el},
-    \label{eq:clean_gb}
-  \end{equation}
-  where the last sum is over all cohort--window pairs $(g,el)$ introduced by
-  the substitution of forbidden DiDs.
+  where $\mathcal{F}$ indexes all forbidden pairs, $v_j = w_{g_l^j g_e^j}^F$
+  is the GB weight on forbidden pair $j$, and $(k_j, m_j)$ are the horizon
+  and pre-lag of the forbidden comparison. Every DiD on the right-hand side
+  uses either the never-treated group or a not-yet-treated cohort as control.
+  The identity holds to machine precision in every finite sample.
 \end{theorem}
 
 \begin{proof}
-  Direct substitution of Lemma~\ref{lem:identity} into \eqref{eq:gb}: for
-  each forbidden pair $(g_e,g_l)$ with weight $v_j=w_{g_l g_e}^{F}$,
+  For each forbidden pair $j$ with weight $v_j$, Lemma~\ref{lem:identity}
+  gives
   \[
-    v_j\,\hDelta_{g_l,g_e}^{F}
+    v_j\,\hDelta_{g_l^j,g_e^j}^{F}
     \;=\;
-    v_j\,\hdelta_{g_l,\infty}^{el}-v_j\,\hdelta_{g_e,\infty}^{el}.
+    v_j\,\hbeta^{\infty m_j}_{g_l^j,g_l^j+k_j}
+    -v_j\,\hpsi^{\infty m_j}_{g_e^j,g_l^j+k_j}.
   \]
-  Summing over all forbidden pairs and collecting terms yields
-  \eqref{eq:clean_gb_raw}. Grouping by cohort--window pair gives the effective
-  weights \eqref{eq:eff_wgt} and the compact form \eqref{eq:clean_gb}. The
-  exactness of \eqref{eq:identity} propagates to the theorem: every step is
-  an algebraic rearrangement with no approximation.
+  Summing over all $j\in\mathcal{F}$ and substituting into \eqref{eq:gb}
+  yields \eqref{eq:clean_gb_raw}. The exactness of each application of
+  Lemma~\ref{lem:identity} propagates through the sum.
 \end{proof}
 
 \subsection{Structure of the New Effective Weights}
 \label{sec:weights}
 
-The effective weights in \eqref{eq:eff_wgt} have a distinctive signed
-structure that we characterise below.
+The decomposition \eqref{eq:clean_gb_raw} contains three groups of terms. We
+characterise their weight structure and identification content.
 
-\paragraph{Positive weights (later-treated cohorts).}
-For each forbidden pair $(g_e,g_l)$ with weight $v_j$, cohort $g_l$ receives
-a positive contribution $+v_j$ on the window-specific clean DiD
-$\hdelta_{g_l,\infty}^{el}$ over $[\Mint_{el},\Post_{el}]$. This term is
-interpretable: $g_l$'s outcome change relative to the never-treated group
-over the post-window of its own treatment constitutes a valid clean comparison
-for estimating $g_l$'s treatment effect.
+\paragraph{Group~(I): Original clean terms.}
+These are the clean DiDs that appear directly in the GB decomposition---never-
+treated and not-yet-treated comparisons. Their weights $w_{g\infty}$ and
+$w_{g_e g_l}^E$ are the original GB weights, unchanged by the substitution.
 
-\paragraph{Negative weights (earlier-treated cohorts).}
-Cohort $g_e$ receives a negative contribution $-v_j$ on
-$\hdelta_{g_e,\infty}^{el}$. This is the key structural feature: $g_e$ has
-been treated throughout both $\Mint_{el}$ and $\Post_{el}$, so its DiD with
-the never-treated group captures the \emph{change} in $g_e$'s own treatment
-effect across these windows---not a counterfactual trend. The forbidden
-comparison implicitly subtracts $g_e$'s own effect, and the clean
-decomposition makes this subtraction explicit via the negative weight.
+\paragraph{Group~(II): Positive substituted terms.}
+For each forbidden pair $j$, the term $\hbeta^{\infty m_j}_{g_l^j, g_l^j+k_j}$
+is a standard never-treated DiD for focal cohort $g_l^j$. At the pre-period
+$g_l^j - m_j$, cohort $g_l^j$ is untreated (since $m_j \geq 1$), so this is a
+valid pre-treatment vs.\ post-treatment comparison that identifies
+$\beta_{g_l^j, g_l^j+k_j}$ under Assumptions~1--4. It enters with positive
+weight $+v_j$.
 
-More formally, under the parallel-trends assumption,
-\begin{align}
-  \E\bigl[\hdelta_{g_l,\infty}^{el}\bigr]
-  &\;=\;
-  \frac{1}{|\Post_{el}|}\!\sum_{t\in\Post_{el}}\beta_{g_l,t}
-  -\frac{1}{|\Mint_{el}|}\!\sum_{t\in\Mint_{el}}\beta_{g_l,t},
-  \label{eq:edid_gl}
-  \\[4pt]
-  \E\bigl[\hdelta_{g_e,\infty}^{el}\bigr]
-  &\;=\;
-  \frac{1}{|\Post_{el}|}\!\sum_{t\in\Post_{el}}\beta_{g_e,t}
-  -\frac{1}{|\Mint_{el}|}\!\sum_{t\in\Mint_{el}}\beta_{g_e,t},
-  \label{eq:edid_ge}
-\end{align}
-so that $\E[\hdelta_{g_l,\infty}^{el}-\hdelta_{g_e,\infty}^{el}]$ equals
-the expected forbidden DiD (cf.\ \eqref{eq:bias}). Under homogeneous,
-time-constant effects ($\beta_{g,t}=\tau$ for all $g,t$), both
-\eqref{eq:edid_gl} and \eqref{eq:edid_ge} equal $\tau-\tau=0$ over any
-window in which the cohort is treated throughout both sub-periods, so the
-negative terms contribute zero in expectation and TWFE is unbiased. Under
-heterogeneous or time-varying CATTs, $\E[\hdelta_{g_e,\infty}^{el}]\neq0$,
-giving rise to bias.
+\paragraph{Group~(III): Negative substituted terms.}
+For each forbidden pair $j$, the term $\hpsi^{\infty m_j}_{g_e^j, g_l^j+k_j}$
+is a never-treated DiD for focal cohort $g_e^j$, but evaluated at the
+\emph{same calendar periods} as the original forbidden comparison: post period
+$g_l^j + k_j$ and pre period $g_l^j - m_j$. Since $j > m$ implies
+$g_e^j = g_l^j - j < g_l^j - m_j$, cohort $g_e^j$ is \emph{already treated}
+at the pre-period $g_l^j - m_j$. This comparison therefore spans two
+post-treatment periods for $g_e^j$, with clean (never-treated) trend control.
+It enters with \emph{negative} weight $-v_j$.
 
-\paragraph{Signed-weight representation and non-negative alternatives.}
-The clean decomposition \eqref{eq:clean_gb} is a \emph{signed} weighted sum of
-clean DiDs: the weights $\tilde{w}_{g,el}$ can be negative. This contrasts
-with heterogeneity-robust estimators (e.g., Callaway and Sant'Anna, 2021; Sun
-and Abraham, 2021) that restrict all weights to be non-negative. The sum of the
-effective weights satisfies
+The distinction between Groups~(II) and~(III) is entirely about the treatment
+status of the \emph{focal} cohort at the pre-period of the comparison:
+Group~(II) DiDs are pre-to-post comparisons (focal cohort untreated in pre);
+Group~(III) DiDs are post-to-post comparisons (focal cohort treated in both
+periods). The identification implications of this distinction are the subject of
+Section~\ref{sec:hetero}.
+
+\paragraph{Sum of signed weights.}
+The collection of signed weights in \eqref{eq:clean_gb_raw} satisfies
 \begin{equation}
   \sum_{g\neq\infty}w_{g\infty}
   +\sum_{g_e<g_l}w_{g_e g_l}^{E}
-  +\sum_{(g,el)}\tilde{w}_{g,el}
+  +\sum_{j\in\mathcal{F}}v_j
+  -\sum_{j\in\mathcal{F}}v_j
   \;=\;
   \sum_{g\neq\infty}w_{g\infty}
-  +\sum_{g_e<g_l}w_{g_e g_l}^{E},
+  +\sum_{g_e<g_l}w_{g_e g_l}^{E}
+  \;<\;1,
   \label{eq:wgt_sum}
 \end{equation}
-because the positive and negative effective weights from each forbidden pair
-cancel in the aggregate ($+v_j-v_j=0$). The right-hand side of \eqref{eq:wgt_sum}
-is strictly less than one whenever forbidden comparisons have positive GB weight,
-so the collection of effective weights does not sum to one. TWFE is therefore
-not a convex combination of clean DiDs; it is a signed linear combination of
-clean DiDs that evaluates to the same number as the convex combination of all
-DiDs (including forbidden ones) given by Theorem~\ref{thm:gb}.
+strictly less than one whenever any forbidden pair has positive GB weight. TWFE
+is therefore not a convex combination of clean DiDs; it is a signed linear
+combination of clean DiDs that numerically equals the convex combination of all
+DiDs (including forbidden ones) given in Theorem~\ref{thm:gb}.
+
+%%%============================================================================
+\section{Bias Under Heterogeneous Treatment Effects}
+\label{sec:hetero}
+%%%============================================================================
+
+We now analyse what the clean decomposition~\eqref{eq:clean_gb_raw} reveals
+when CATTs are heterogeneous. The central question is whether the clean
+Goodman-Bacon decomposition recovers an unbiased estimator. The answer is no:
+it is an exact algebraic restatement of TWFE and therefore carries the same
+bias. The clean decomposition's contribution is to make the \emph{mechanism}
+of that bias explicit through the structure of the negative-weight terms.
+
+\subsection{Expected Values of the Three Groups}
+
+We compute expected values under Assumptions~1--4 without imposing
+homogeneity.
+
+\paragraph{Group~(I) terms.}
+Clean DiDs identify CATTs regardless of heterogeneity. For the never-treated
+comparison,
+\[
+  \E\bigl[\hbeta^{\infty m}_{g,g+k}\bigr] \;=\; \beta_{g,g+k},
+\]
+because cohort $g$ is untreated at the pre-period $g-m$ (by Assumptions~2 and~4)
+and the never-treated group has $\beta_{\infty,t}=0$ always. The same holds for
+the not-yet-treated comparison $\hbeta^{lm}_{g,g+k}$, since the control cohort
+$g+l$ is untreated at post-period $g+k < g+l$.
+
+\paragraph{Group~(II) terms.}
+Each positive substituted term $\hbeta^{\infty m_j}_{g_l^j, g_l^j+k_j}$ is a
+standard never-treated DiD for cohort $g_l^j$. Under Assumptions~1--4,
+\begin{equation}
+  \E\bigl[\hbeta^{\infty m_j}_{g_l^j,\,g_l^j+k_j}\bigr]
+  \;=\;
+  \beta_{g_l^j,\,g_l^j+k_j},
+  \label{eq:pos_ev}
+\end{equation}
+which is the CATT of the later-treated cohort at horizon $k_j$. This is an
+unbiased estimate of the true parameter of interest.
+
+\paragraph{Group~(III) terms.}
+Each negative substituted term $\hpsi^{\infty m_j}_{g_e^j, g_l^j+k_j}$ uses
+never-treated as control but compares $g_e^j$'s outcome across two
+\emph{post-treatment} calendar periods: $g_l^j + k_j$ (post) and $g_l^j - m_j$
+(pre). Since $g_e^j$ is already treated at both periods, under parallel trends
+the outcome levels include the cohort's treatment effect at each period. The
+expected value is
+\begin{equation}
+  \E\bigl[\hpsi^{\infty m_j}_{g_e^j,\,g_l^j+k_j}\bigr]
+  \;=\;
+  \beta_{g_e^j,\,g_l^j+k_j} - \beta_{g_e^j,\,g_l^j-m_j}.
+  \label{eq:neg_ev}
+\end{equation}
+This is the \emph{change} in cohort $g_e^j$'s own CATT between the two
+post-treatment periods, not the CATT itself. Clean control group
+notwithstanding, this term does not identify any parameter of interest.
+
+\subsection{The Bias Formula}
+
+Taking expectations in \eqref{eq:clean_gb_raw} and substituting
+\eqref{eq:pos_ev}--\eqref{eq:neg_ev}:
+\begin{align}
+  \E[\TWFE]
+  &\;=\;
+  \underbrace{%
+    \sum_{g\neq\infty}w_{g\infty}\,\E[\hDelta_{g,\infty}]
+    +\sum_{g_e<g_l}w_{g_e g_l}^{E}\,\E[\hDelta_{g_e,g_l}^{E}]
+    +\sum_{j\in\mathcal{F}}v_j\,\beta_{g_l^j,\,g_l^j+k_j}
+  }_{\text{unbiased part: identifies CATTs}}
+  \notag\\[6pt]
+  &\quad
+  -\underbrace{%
+    \sum_{j\in\mathcal{F}}v_j
+    \bigl(\beta_{g_e^j,\,g_l^j+k_j} - \beta_{g_e^j,\,g_l^j-m_j}\bigr)
+  }_{\text{bias: weighted change in already-treated cohorts' CATTs}}.
+  \label{eq:ev_decomp}
+\end{align}
+The bias of TWFE under heterogeneous effects is therefore
+\begin{equation}
+  \mathrm{Bias}(\TWFE)
+  \;=\;
+  -\sum_{j\in\mathcal{F}}
+    v_j\,\bigl(\beta_{g_e^j,\,g_l^j+k_j} - \beta_{g_e^j,\,g_l^j-m_j}\bigr),
+  \label{eq:bias_formula}
+\end{equation}
+a weighted sum of changes in the already-treated control cohorts' own CATTs,
+where the change is between the post- and pre-periods of the corresponding
+forbidden comparison. This is consistent with---and derived from---the single-
+comparison bias formula \eqref{eq:bias}.
+
+\subsection{Condition for Unbiasedness}
+
+Equation~\eqref{eq:bias_formula} is zero if and only if
+\begin{equation}
+  \beta_{g_e^j,\,g_l^j+k_j} = \beta_{g_e^j,\,g_l^j-m_j}
+  \qquad\text{for all forbidden pairs }j\in\mathcal{F}.
+  \label{eq:unbias_cond}
+\end{equation}
+This requires that each already-treated control cohort's CATT does not change
+between the two calendar periods of the forbidden comparison.
+
+Two cases warrant emphasis:
+
+\begin{enumerate}
+  \item \textbf{Homogeneous, time-constant effects} ($\beta_{g,t}=\tau$ for all
+    $g,t$): condition~\eqref{eq:unbias_cond} holds trivially, since
+    $\tau - \tau = 0$. TWFE is unbiased. This is the ``best case'' for TWFE and
+    the assumption under which it was designed.
+
+  \item \textbf{Cohort-heterogeneous but time-constant effects}
+    ($\beta_{g,t}=\beta_g$ for all $t$): each CATT depends on cohort but not
+    on calendar time, so $\beta_{g_e,g_l+k} - \beta_{g_e,g_l-m} = \beta_{g_e}
+    - \beta_{g_e} = 0$. Condition~\eqref{eq:unbias_cond} still holds and TWFE
+    is unbiased. Heterogeneity \emph{across cohorts} alone is not sufficient to
+    bias TWFE; the critical ingredient is heterogeneity \emph{over time} within
+    a cohort.
+
+  \item \textbf{Time-varying effects} ($\beta_{g,t}$ changes with $t$ for any
+    cohort $g_e^j$ that serves as already-treated control): the bias is
+    generically non-zero. The direction depends on the sign of
+    $\beta_{g_e,g_l+k} - \beta_{g_e,g_l-m}$ (whether effects are growing or
+    decaying) and can be positive or negative.
+\end{enumerate}
+
+\subsection{Why the Clean Decomposition Does Not Remove Bias}
+
+The clean Goodman-Bacon decomposition \eqref{eq:clean_gb_raw} is an exact
+algebraic restatement of TWFE: it evaluates to the same number in every finite
+sample. Whatever bias TWFE carries under heterogeneous effects, the clean
+decomposition carries identically, because the two are numerically equal.
+
+What has changed is the \emph{representation}, not the estimator. The
+negative-weight terms $-v_j\,\hpsi^{\infty m_j}_{g_e^j, g_l^j+k_j}$ were
+always implicitly present in TWFE through the forbidden comparisons; the clean
+decomposition makes them explicit. Their non-zero expectations under
+time-varying effects---given by \eqref{eq:neg_ev}---are precisely TWFE's bias,
+now visibly attributed to their source: the change in already-treated cohorts'
+own CATTs over the comparison window.
+
+\subsection{What an Unbiased Estimator Requires}
+
+Equation~\eqref{eq:ev_decomp} shows that the ``unbiased part'' of TWFE, when
+expressed in clean terms, consists of Groups~(I) and~(II): the original clean
+GB terms and the positive substituted never-treated DiDs. These identify CATTs.
+The Group~(III) terms introduce bias.
+
+To construct an unbiased estimator, one must:
+\begin{enumerate}
+  \item \textbf{Zero out the negative-weight terms.} Set $v_j = 0$ for all
+    Group~(III) terms, equivalently discarding the contaminating
+    $\hpsi^{\infty m_j}_{g_e^j, g_l^j+k_j}$ comparisons. This breaks
+    numerical equality with TWFE and produces a genuinely different estimator.
+  \item \textbf{Re-normalise the remaining positive weights.} The collection of
+    Group~(I) and Group~(II) terms uses only clean DiDs with positive weights,
+    but their implicit aggregation reflects the GB variance weighting rather
+    than the researcher's target $\theta$. Assigning weights that match the
+    aggregation scheme in \eqref{eq:att} gives an unbiased estimator of
+    $\theta$.
+\end{enumerate}
+This two-step procedure is precisely what heterogeneity-robust estimators
+implement. Callaway and Sant'Anna (2021) and Sun and Abraham (2021) restrict
+to never-treated or not-yet-treated controls and choose aggregation weights
+explicitly. Gardner et al.\ (2024) and Borusyak et al.\ (2024) impute
+counterfactuals from never-treated observations, implicitly zeroing out the
+Group~(III) terms. In all cases, the identifying information comes entirely
+from the Group~(I) and Group~(II) comparison types, consistent with
+Corollary~\ref{cor:redundancy}: the already-treated control comparisons are
+redundant for identification, and their removal does not sacrifice any
+information about $\theta$.
 
 %%%============================================================================
 \section{Discussion}
@@ -552,112 +694,55 @@ DiDs (including forbidden ones) given by Theorem~\ref{thm:gb}.
 
 \subsection{How TWFE Accommodates Forbidden Comparisons}
 
-In the original Goodman-Bacon representation \eqref{eq:gb}, TWFE assigns
-positive weight to every $2\times2$ DiD, including forbidden ones. The
-mechanism is the within-pair variance weighting that the TWFE projection
-naturally generates: any two cohorts that differ in their treatment timing
-produce a source of identifying variation, and the OLS projection exploits all
-such variation proportionally to its magnitude. Using already-treated cohorts
-as controls extends the set of comparisons and therefore reduces variance---under
-\emph{homogeneous} effects this is costless, because the contaminating term
-$\beta_{g_e,g+k}-\beta_{g_e,g-m}$ in \eqref{eq:bias} vanishes when effects
-are constant over time. TWFE's reliance on forbidden comparisons is thus an
-implicit optimisation for the homogeneous-effects case: it extracts the maximum
-variance from the panel under the maintained assumption that all DiDs identify
-the same estimand.
+In the original GB representation \eqref{eq:gb}, TWFE assigns positive weight
+to every $2\times2$ DiD, including forbidden ones. The mechanism is the
+within-pair variance weighting that the OLS projection naturally generates:
+any two cohorts that differ in their treatment timing produce variation in the
+treatment indicator, and OLS exploits all such variation proportionally to its
+magnitude. Using already-treated cohorts as controls extends the set of
+comparisons and reduces variance---under homogeneous, time-constant effects this
+is costless, because the bias term $\beta_{g_e,g_l+k}-\beta_{g_e,g_l-m}$ in
+\eqref{eq:bias} vanishes. TWFE's reliance on forbidden comparisons is an
+implicit optimisation for the homogeneous-effects case.
 
-The Goodman-Bacon decomposition exposes this implicit choice by showing the
-weight that TWFE places on each forbidden comparison. In empirical applications
-with substantial heterogeneity, a large share of the total GB weight may fall
-on forbidden DiDs (as in Beck et al., 2010, where 87.5\% of the weight in the
-full sample comes from forbidden or always-treated comparisons), making the
-bias severe.
+\subsection{A Taxonomy of Estimators by Effective Weight}
 
-\subsection{What Changes in the Clean Decomposition}
+The clean decomposition \eqref{eq:clean_gb_raw} and the bias
+formula~\eqref{eq:bias_formula} suggest a natural taxonomy:
 
-The clean Goodman-Bacon decomposition does not discard any information, modify
-the estimator, or change its numerical value. It is an exact restatement of
-TWFE. Three things change in the representation:
-
-\begin{enumerate}
-
-  \item \textbf{Negative effective weights reveal the bias mechanism.}
-    The terms $-v_j\,\hdelta_{g_e,\infty}^{el}$ in \eqref{eq:clean_gb_raw}
-    enter with negative weight because the forbidden comparison implicitly
-    subtracts the already-treated cohort's own outcome change. Under
-    heterogeneous CATTs, $\E[\hdelta_{g_e,\infty}^{el}]=
-    \bar{\beta}_{g_e,\Post}-\bar{\beta}_{g_e,\Mint}\neq0$, so these terms
-    contribute bias to TWFE. The clean decomposition makes this contamination
-    explicit: TWFE is biased because the negative-weight terms are
-    non-centred under heterogeneity.
-
-  \item \textbf{TWFE is not a weighted average of clean DiDs with positive
-    weights.} A researcher building an estimator from clean moments only and
-    restricting all weights to be non-negative---as do Callaway and Sant'Anna
-    (2021) and Sun and Abraham (2021)---is solving a different optimisation
-    problem from TWFE. The clean decomposition \eqref{eq:clean_gb} confirms
-    that TWFE, even when expressed entirely in clean terms, involves negative
-    weights on $\hdelta_{g_e,\infty}^{el}$ for all $g_e$ that appear as
-    already-treated controls.
-
-  \item \textbf{The negative weights add variance without adding
-    identification.}
-    Under Corollary~\ref{cor:redundancy}, the information content of the
-    forbidden comparisons is already present in the clean DiDs. The
-    negative-weight terms $\hdelta_{g_e,\infty}^{el}$ therefore contribute
-    noise without adding identifying variation. Under serial correlation, this
-    additional variance is compounded because $\hdelta_{g_e,\infty}^{el}$
-    is correlated with other DiDs that involve the same units. An optimal
-    estimator that exploits the covariance structure of the clean moments---as
-    in the GMM framework developed in this paper---can therefore achieve lower
-    variance than TWFE by assigning zero weight to the contaminating negative
-    terms and optimally weighting the positive clean moments.
-
-\end{enumerate}
-
-\subsection{Connection to the Literature and Implications for Estimation}
-
-Callaway and Sant'Anna (2021) and Sun and Abraham (2021) avoid forbidden
-comparisons by construction, using never-treated or not-yet-treated cohorts as
-controls. Corollary~\ref{cor:redundancy} provides the formal justification for
-this approach: the clean comparisons span the same space of identifying
-information as all comparisons including forbidden ones, so nothing is lost by
-restricting to clean controls.
-
-Gardner et al.\ (2024) and Borusyak et al.\ (2024) impute counterfactuals
-from pre-treatment and never-treated observations, which also amounts to using
-only clean comparisons. Wooldridge (2025) proposes the flexible TWFE
-specification \eqref{eq:twfe_flex} that achieves the same goal through
-cohort-by-time interaction terms.
-
-The clean decomposition \eqref{eq:clean_gb} suggests a natural classification
-of estimators by their effective weight on $\hdelta_{g_e,\infty}^{el}$:
 \begin{itemize}
-  \item \textbf{TWFE}: effective weight $\tilde{w}_{g_e,el}=-v_j<0$
-    (contaminated).
-  \item \textbf{Heterogeneity-robust estimators}: effective weight on
-    $\hdelta_{g_e,\infty}^{el}$ is zero (clean, unbiased, but potentially
-    inefficient under serial correlation because the covariance structure of
-    the clean moments is ignored).
-  \item \textbf{Optimal GMM}: assigns weights to the clean moments that
-    minimise asymptotic variance by exploiting their covariance structure,
-    achieving efficiency within the class of unbiased estimators based on
-    clean $2\times2$ DiDs.
+  \item \textbf{TWFE}: assigns positive weight to Groups~(I) and~(II) and
+    negative weight to Group~(III). Biased under time-varying heterogeneous
+    effects; efficient under homogeneous effects (Gauss--Markov).
+
+  \item \textbf{Heterogeneity-robust estimators} (CS, SA, Gardner, Borusyak):
+    assign zero weight to Group~(III) and positive weight to Groups~(I)
+    and~(II) only. Unbiased under heterogeneous effects; potentially
+    inefficient because the covariance structure of clean moments is ignored.
+
+  \item \textbf{Optimal GMM}: assigns weights to clean moments that minimise
+    asymptotic variance by exploiting their serial covariance structure.
+    Achieves efficiency within the class of unbiased estimators based on clean
+    $2\times2$ DiDs, at the cost of estimating the moment covariance matrix.
 \end{itemize}
 
 \subsection{Summary}
 
 The Goodman-Bacon decomposition expresses TWFE as a weighted average of all
 $2\times2$ DiDs, with positive weight on forbidden comparisons.
-Lemma~\ref{lem:identity} establishes that every forbidden DiD equals the
-difference of two window-specific never-treated DiDs, with the never-treated
-terms cancelling exactly in every sample. Corollary~\ref{cor:redundancy}
-shows that forbidden comparisons are therefore \emph{redundant}: they lie in
-the linear span of the clean DiDs and carry no additional identifying
-information. Theorem~\ref{thm:clean_gb} exploits this identity to rewrite
-TWFE as a signed weighted sum of clean DiDs, recovering TWFE to machine
-precision. The effective weights reveal that already-treated cohorts enter with
-negative weight in the clean representation---the structural origin of both the
-bias and the efficiency loss of TWFE under heterogeneous treatment effects.
+Lemma~\ref{lem:identity} establishes that every forbidden comparison---using an
+already-treated control---equals the difference of two never-treated DiDs at the
+same calendar periods, with the never-treated terms cancelling exactly.
+Corollary~\ref{cor:redundancy} shows that forbidden comparisons are therefore
+redundant: they carry no identifying information beyond the clean comparisons.
+Theorem~\ref{thm:clean_gb} rewrites TWFE as a signed sum of clean DiDs,
+recovering TWFE to machine precision. Section~\ref{sec:hetero} shows that the
+negative-weight terms---never-treated DiDs for already-treated focal cohorts
+across two post-treatment periods---are zero in expectation under homogeneous
+constant effects and non-zero under time-varying heterogeneous effects. The bias
+of TWFE equals minus the weighted sum of changes in already-treated cohorts'
+CATTs (equation~\eqref{eq:bias_formula}). An unbiased estimator must zero out
+the Group~(III) terms and re-normalise the remaining positive-weight clean DiDs
+to target the desired aggregate ATT.
 
 \end{document}
