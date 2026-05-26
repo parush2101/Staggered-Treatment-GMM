@@ -28,8 +28,6 @@
 \newcommand{\E}{\mathbb{E}}
 \newcommand{\bY}{\bar{Y}}
 \newcommand{\TWFE}{\hat{\theta}_{\mathrm{TWFE}}}
-\newcommand{\Tpre}{\mathcal{T}^{\mathrm{pre}}}
-\newcommand{\Tpost}{\mathcal{T}^{\mathrm{post}}}
 \newcommand{\hbeta}{\hat{\beta}}
 \newcommand{\hpsi}{\hat{\psi}}     % never-treated DiD for already-treated focal
 \newcommand{\hdelta}{\hat{\delta}}
@@ -227,45 +225,54 @@ $g+k$.
 %%%============================================================================
 
 Goodman-Bacon (2021) establishes that $\TWFE$ is a weighted average of all
-pairwise $2\times2$ DiDs that can be formed from the panel. To state the
-decomposition we use window-averaged DiD objects, as in the original theorem.
+pairwise $2\times2$ DiDs that can be formed from the panel. The decomposition
+groups these into three aggregate objects, each an equal-weighted average of
+the period-specific DiDs from Definition~\ref{def:types}.
 
 \subsection*{Aggregate DiD objects}
 
-For each treated cohort $g$, let $\Tpost_g=\{g,g+1,\ldots,T\}$ and
-$\Tpre_g=\{1,2,\ldots,g-1\}$ denote its post- and pre-treatment calendar
-periods. The \textbf{treated-vs-never-treated DiD} averages the focal cohort's
-outcome over its full post-treatment window and the pre-treatment window,
-using never-treated as control:
+For each treated cohort $g$, the \textbf{treated-vs-never-treated DiD} is the
+equal-weighted average of the period-specific never-treated DiDs
+(Definition~\ref{def:types}(1)) over all post-periods $g+k\in\{g,\ldots,T\}$
+and pre-lags $m\in\{1,\ldots,g-1\}$:
 \begin{equation}
   \hDelta_{g,\infty}
   \;=\;
-  (\bY_{g,\Tpost_g}-\bY_{g,\Tpre_g})
-  -(\bY_{\infty,\Tpost_g}-\bY_{\infty,\Tpre_g}).
+  \frac{1}{(T-g+1)(g-1)}
+  \sum_{k=0}^{T-g}\sum_{m=1}^{g-1}
+  \hbeta^{\infty m}_{g,\,g+k}.
   \label{eq:did_nt}
 \end{equation}
 
 For each early--late pair $(g_e,g_l)$ with $g_e<g_l$, two aggregate $2\times2$
-DiDs arise. The \textbf{``Earlier vs.\ Later Treated''} comparison uses $g_l$ as
-a not-yet-treated control and is clean:
+DiDs arise. The \textbf{``Earlier vs.\ Later Treated''} comparison averages the
+not-yet-treated DiDs (Definition~\ref{def:types}(2)) with focal cohort $g_e$
+and control $g_l$ over the $(g_l-g_e)(g_e-1)$ period-by-lag pairs where $g_l$
+is not yet treated:
 \begin{equation}
   \hDelta_{g_e,g_l}^{E}
   \;=\;
-  (\bY_{g_e,\,\{g_e,\ldots,g_l-1\}}-\bY_{g_e,\Tpre_{g_e}})
-  -(\bY_{g_l,\,\{g_e,\ldots,g_l-1\}}-\bY_{g_l,\Tpre_{g_e}}).
+  \frac{1}{(g_l-g_e)(g_e-1)}
+  \sum_{k=0}^{g_l-g_e-1}\sum_{m=1}^{g_e-1}
+  \bigl[(Y_{g_e,g_e+k}-Y_{g_e,g_e-m})-(Y_{g_l,g_e+k}-Y_{g_l,g_e-m})\bigr].
   \label{eq:did_early}
 \end{equation}
-The \textbf{``Later vs.\ Earlier Treated''} comparison uses $g_e$ as an
-already-treated control and is forbidden:
+At every post-period $g_e+k$ in this sum, the control cohort $g_l$ satisfies
+$g_l > g_e+k$ and is therefore not yet treated.
+
+The \textbf{``Later vs.\ Earlier Treated''} comparison averages the
+already-treated DiDs (Definition~\ref{def:types}(3)) with focal cohort $g_l$
+and control $g_e$ over the $(T-g_l+1)(g_l-g_e)$ period-by-lag pairs:
 \begin{equation}
   \hDelta_{g_l,g_e}^{F}
   \;=\;
-  (\bY_{g_l,\,\{g_l,\ldots,T\}}-\bY_{g_l,\,\{g_e,\ldots,g_l-1\}})
-  -(\bY_{g_e,\,\{g_l,\ldots,T\}}-\bY_{g_e,\,\{g_e,\ldots,g_l-1\}}).
+  \frac{1}{(T-g_l+1)(g_l-g_e)}
+  \sum_{k=0}^{T-g_l}\sum_{m=1}^{g_l-g_e}
+  \bigl[(Y_{g_l,g_l+k}-Y_{g_l,g_l-m})-(Y_{g_e,g_l+k}-Y_{g_e,g_l-m})\bigr].
   \label{eq:did_forbidden}
 \end{equation}
-In $\hDelta_{g_l,g_e}^F$, cohort $g_e$ serves as control despite being fully
-treated in both the pre- and post-periods of the comparison for $g_l$.
+In $\hDelta_{g_l,g_e}^F$, cohort $g_e$ serves as control despite being already
+treated at every pre-period $g_l-m\geq g_e$ in this average.
 
 \subsection*{The decomposition}
 
@@ -297,7 +304,7 @@ treated in both the pre- and post-periods of the comparison for $g_l$.
     w_{g\infty}
     \;\propto\;
     N_g N_\infty \cdot
-    \frac{|\Tpost_g|\cdot|\Tpre_g|}{T^2};
+    \frac{(T-g+1)(g-1)}{T^2};
   \]
   see Goodman-Bacon (2021, Theorem~1) for the full weight formulas.
 \end{theorem}
@@ -524,48 +531,12 @@ DiDs (including forbidden ones) given in Theorem~\ref{thm:gb}.
 \subsection{Period-Specific Representation}
 \label{sec:period_specific}
 
-The aggregate never-treated DiD $\hDelta_{g,\infty}$ in \eqref{eq:did_nt}
-collapses the entire post-treatment window and the entire pre-treatment window
-into scalar averages before differencing. It can be decomposed into its
-constituent period-specific building blocks.
-
-\begin{proposition}
-  \label{prop:period_specific}
-  The aggregate never-treated DiD defined in \eqref{eq:did_nt} satisfies
-  \begin{equation}
-    \hDelta_{g,\infty}
-    \;=\;
-    \frac{1}{(T-g+1)(g-1)}
-    \sum_{k=0}^{T-g}\sum_{m=1}^{g-1}
-    \hbeta^{\infty m}_{g,\,g+k},
-    \label{eq:window_decomp}
-  \end{equation}
-  an equal-weighted average over all $(T-g+1)(g-1)$ period-by-lag pairs
-  $(k,m)$.
-\end{proposition}
-
-\begin{proof}
-  Substituting \eqref{eq:2x2} and separating the double sum:
-  \begin{align*}
-    &\frac{1}{(T-g+1)(g-1)}
-    \sum_{k,m}
-    \bigl[(Y_{g,g+k}-Y_{g,g-m})-(Y_{\infty,g+k}-Y_{\infty,g-m})\bigr]
-    \\[4pt]
-    &\;=\;
-    \underbrace{\frac{1}{T-g+1}\sum_{k=0}^{T-g}Y_{g,g+k}}_{\bY_{g,\Tpost_g}}
-    -\underbrace{\frac{1}{g-1}\sum_{m=1}^{g-1}Y_{g,g-m}}_{\bY_{g,\Tpre_g}}
-    -\underbrace{\frac{1}{T-g+1}\sum_{k=0}^{T-g}Y_{\infty,g+k}}_{\bY_{\infty,\Tpost_g}}
-    +\underbrace{\frac{1}{g-1}\sum_{m=1}^{g-1}Y_{\infty,g-m}}_{\bY_{\infty,\Tpre_g}}
-    \;=\;\hDelta_{g,\infty},
-  \end{align*}
-  where the separation uses the fact that $Y_{g,g+k}$ appears $(g-1)$ times
-  (once for each $m$) and $Y_{g,g-m}$ appears $(T-g+1)$ times (once for each
-  $k$); the cross-terms cancel identically.
-\end{proof}
-
-\noindent
-The period-specific GB weight on the individual never-treated DiD
-$\hbeta^{\infty m}_{g,g+k}$ contributed by Group~(I) is therefore
+Since $\hDelta_{g,\infty}$ is defined in \eqref{eq:did_nt} as the
+equal-weighted average of all $(T-g+1)(g-1)$ period-specific never-treated
+DiDs $\hbeta^{\infty m}_{g,g+k}$, the GB cohort weight $w_{g\infty}$
+distributes uniformly over these building blocks. The period-specific GB weight
+on the individual never-treated DiD $\hbeta^{\infty m}_{g,g+k}$ contributed
+by Group~(I) is therefore
 \begin{equation}
   \omega^{\mathrm{GB}}_{g,k,m}
   \;=\;
@@ -757,7 +728,7 @@ information about $\theta$.
 \label{sec:comparison}
 %%%============================================================================
 
-The period-specific representation \eqref{eq:window_decomp} and the
+The aggregate DiD definition \eqref{eq:did_nt} and the
 weight~\eqref{eq:ps_weight} express the unbiased part of the clean GB
 decomposition---Groups~(I) and~(II) with Group~(III) zeroed out---as a
 weighted sum of never-treated $2\times2$ DiDs $\hbeta^{\infty m}_{g,g+k}$
@@ -810,7 +781,7 @@ equally over $k$.
   \item \textbf{Period-specific CATTs.} CS delivers $\hbeta^{CS}_{g,g+k}$ as
     an explicit output for each $(g,k)$ cell, enabling event-study plots and
     formal tests of treatment effect dynamics. Clean GB produces only the
-    cohort-level window average $\hDelta_{g,\infty}$.
+    cohort-level aggregate $\hDelta_{g,\infty}$.
   \item \textbf{Uniform pre-trend diagnostic.} Using the same estimand
     $\hbeta^{\infty 1}_{g,g+k}$ at negative horizons $k<0$ provides a natural
     and consistently defined pre-trend test across the full event window.
@@ -913,7 +884,7 @@ Control group & Never- and not-yet-treated & Never- or not-yet-treated & Never-t
 Pre-lag $m$ & All $m$, equal weight & Fixed $m=1$ & All $m$, equal weight \\
 Event-time $k$ weight & Equal within cohort & Researcher-specified & Researcher-specified \\
 Cohort weight & $w_{g\infty}\propto N_gN_\infty(T{-}g{+}1)(g{-}1)$ & Researcher-specified & Researcher-specified \\
-Period-specific CATTs & No (window aggregate) & Yes & Yes \\
+Period-specific CATTs & No (cohort aggregate) & Yes & Yes \\
 Unbiased (heterog.) & Yes & Yes & Yes \\
 \bottomrule
 \end{tabular}
@@ -923,7 +894,7 @@ Unbiased (heterog.) & Yes & Yes & Yes \\
 The three estimators span a trade-off between transparency and flexibility.
 Clean GB is directly linked to the algebra of TWFE---revealing exactly which
 comparisons drive its behaviour and where its bias originates---but it produces
-only the cohort-level window average $\hDelta_{g,\infty}$ rather than
+only the cohort-level aggregate $\hDelta_{g,\infty}$ rather than
 period-specific CATTs. CS and Gardner decouple estimation from aggregation,
 giving the researcher control over event-time and cohort weights, at the cost
 of requiring explicit aggregation decisions.
