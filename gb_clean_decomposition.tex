@@ -925,13 +925,12 @@ that selects weights to minimise asymptotic variance.
 
 Two cases are distinguished. Under \emph{homogeneous effects}
 ($\beta_{g,g+k}=\theta$ for all $g,k$), the parameter is a scalar and every
-clean comparison identifies the same $\theta$; the GMM exploits only clean
-comparisons (Section~\ref{sec:gmm_homog}). Under \emph{heterogeneous effects},
-CATTs vary across cohort-event cells, the parameter of interest is a
-researcher-specified weighted average of the CATT vector, and all $2\times2$
-DiDs---including forbidden ones---can be incorporated into the GMM via a
-debiasing correction encoded in the incidence matrix
-(Section~\ref{sec:gmm_hetero}).
+clean comparison identifies the same $\theta$ (Section~\ref{sec:gmm_homog}).
+Under \emph{heterogeneous effects}, CATTs vary across cohort-event cells and
+the parameter of interest is a researcher-specified weighted average of the
+CATT vector. In both cases the GMM uses only clean comparisons: forbidden
+comparisons are algebraically redundant and excluded throughout
+(Section~\ref{sec:gmm_hetero}, Remark~\ref{rem:redund_hetero}).
 
 %%%------------------------------------------------------------------------
 \subsection{Homogeneous Effects}
@@ -1282,12 +1281,10 @@ trade-off for moderate $T$ and $G$.
 %%%------------------------------------------------------------------------
 
 Under heterogeneous effects, CATTs $\beta_{g,g+k}$ vary across cohort-event
-cells. The target parameter is a researcher-specified weighted average of the
-full CATT vector, and the moment conditions must be re-derived to account for
-the bias that the forbidden comparisons carry. The key architectural difference
-from the homogeneous case is that forbidden DiDs need not be discarded: their
-bias can be absorbed into the moment-condition structure, allowing all
-$2\times2$ DiDs to contribute to estimation.
+cells and the parameter of interest is a researcher-specified weighted average
+of the CATT vector. By Corollary~\ref{cor:redundancy} and its heterogeneous
+extension (see below), forbidden comparisons carry no identifying information
+beyond the clean ones and are excluded from the moment set throughout.
 
 \subsubsection{The CATT Vector and Aggregate ATT}
 \label{sec:gmm_hetero_catt}
@@ -1310,70 +1307,63 @@ chosen by the researcher. Standard choices include equal weighting across all
 $(g,k)$ cells (overall ATT), cohort-specific weighting (cohort ATTs), or
 weighting by cell size to match the TWFE-implicit scheme.
 
-\subsubsection{Moment Conditions and the Modified Incidence Matrix}
+\subsubsection{Moment Conditions}
 \label{sec:gmm_hetero_moments}
 
-Under heterogeneous effects, the three types of $2\times2$ DiD defined in
-Section~\ref{sec:2x2} have different moment conditions.
-
-\paragraph{Clean comparisons.}
-For never-treated and not-yet-treated controls, the bias formula
-\eqref{eq:bias} gives $\E[\hbeta^{cm}_{g,g+k}]=\beta_{g,g+k}$, so the
-natural moment condition is
+For each clean comparison $(g,c,k,m)$ with $c\in\{\infty,\,g+l\}$
+(never-treated or not-yet-treated), the bias formula \eqref{eq:bias}
+gives $\E[\hbeta^{cm}_{g,g+k}]=\beta_{g,g+k}$. The moment condition is
 \begin{equation}
   \hat{\phi}^{cm}_{g,g+k}(\boldsymbol{\beta})
   \;=\;
   \hbeta^{cm}_{g,g+k} - \beta_{g,g+k},
-  \qquad c\in\{\infty,\,g+l\},
   \label{eq:moment_clean_h}
 \end{equation}
 with $\E[\hat{\phi}^{cm}_{g,g+k}(\boldsymbol{\beta}_0)]=0$ at the true
-parameter.
-
-\paragraph{Forbidden comparisons (debiased).}
-For already-treated control $c=g_e=g-j$, equation~\eqref{eq:bias} gives
-$\E[\hbeta^{jm}_{g,g+k}]=\beta_{g,g+k}-(\beta_{g_e,g+k}-\beta_{g_e,g-m})$.
-The contaminating change in the control cohort's CATT can be moved to the
-left-hand side, yielding the \emph{debiased} moment condition:
-\begin{equation}
-  \hat{\phi}^{jm}_{g,g+k}(\boldsymbol{\beta})
-  \;=\;
-  \hbeta^{jm}_{g,g+k} - \beta_{g,g+k}
-  + \beta_{g_e,\,g+k} - \beta_{g_e,\,g-m},
-  \label{eq:moment_forb_h}
-\end{equation}
-where $g_e=g-j$. At the true $\boldsymbol{\beta}_0$,
-$\E[\hat{\phi}^{jm}_{g,g+k}(\boldsymbol{\beta}_0)]=0$ for every forbidden
-comparison. This construction retains the information in forbidden DiDs
-without relying on homogeneity: the contaminating CATTs
-$\beta_{g_e,g+k}$ and $\beta_{g_e,g-m}$ are treated as parameters to be
-estimated jointly.
-
-\paragraph{Stacked system.}
-Collecting all $N_{2\times2}$ moments---clean and debiased forbidden---into
-a single column vector, the system takes the linear form
+parameter. Stacking all $N_c$ clean moments into a column vector:
 \begin{equation}
   \hat{\boldsymbol{\phi}}(\boldsymbol{\beta})
   \;=\;
-  \boldsymbol{\Delta} - Q_H\,\boldsymbol{\beta},
+  \boldsymbol{\Delta}_c - Q_c\,\boldsymbol{\beta},
   \label{eq:stacked_h}
 \end{equation}
-where $\boldsymbol{\Delta}$ is the $N_{2\times2}\times1$ vector of all
-sample DiD estimates and $Q_H$ is the $N_{2\times2}\times N_\beta$ modified
-incidence matrix. For each comparison $s$, the $s$-th row of $Q_H$ has:
-$+1$ in the column for $\beta_{g,g+k}$ (the focal CATT);
-for forbidden comparisons additionally $+1$ in the column for
-$\beta_{g_e,g+k}$ and $-1$ in the column for $\beta_{g_e,g-m}$
-(the contaminating pre- and post-period CATTs of the control cohort).
-Clean comparisons have zero entries in all other columns. The system
-\eqref{eq:stacked_h} satisfies $\E[\hat{\boldsymbol{\phi}}(\boldsymbol{\beta}_0)]=\mathbf{0}$
-and is identified whenever $Q_H$ has full column rank, which holds if
-every $\beta_{g,g+k}$ is anchored by at least one clean comparison.
+where $\boldsymbol{\Delta}_c$ is the $N_c\times1$ vector of clean DiD
+estimates and $Q_c$ is the $N_c\times N_\beta$ \emph{clean incidence matrix}.
+Each row of $Q_c$ has $+1$ in the column for $\beta_{g,g+k}$ (the CATT
+targeted by that comparison) and $0$ elsewhere. In the homogeneous case
+$N_\beta=1$ and $Q_c=\mathbf{1}_{N_c}$, recovering \eqref{eq:stacked}.
+The system \eqref{eq:stacked_h} is identified whenever $Q_c$ has full
+column rank, which holds if every $\beta_{g,g+k}$ is anchored by at least
+one clean comparison.
+
+\begin{remark}[Redundancy of Forbidden Comparisons under Heterogeneous Effects]
+  \label{rem:redund_hetero}
+  Forbidden comparisons are excluded because they add no new moment
+  conditions beyond what the clean set already provides. Applying
+  Lemma~\ref{lem:identity} to the sample identity
+  $\hbeta^{jm}_{g_l,g_l+k}=\hbeta^{\infty m}_{g_l,g_l+k}-
+  \hpsi^{\infty m}_{g_e,g_l+k}$, and noting that
+  $\hpsi^{\infty m}_{g_e,g_l+k}=\hbeta^{\infty m'}_{g_e,g_l+k}-
+  \hbeta^{\infty m'}_{g_e,g_l-m}$ for any pre-lag $m'$, the
+  \emph{debiased} forbidden moment equals an exact linear combination of
+  three clean never-treated moments:
+  \[
+    \hat{\phi}^{jm}_{g_l,g_l+k}(\boldsymbol{\beta})
+    \;=\;
+    \hat{\phi}^{\infty m}_{g_l,\,g_l+k}(\boldsymbol{\beta})
+    -\hat{\phi}^{\infty m'}_{g_e,\,g_l+k}(\boldsymbol{\beta})
+    +\hat{\phi}^{\infty m'}_{g_e,\,g_l-m}(\boldsymbol{\beta}).
+  \]
+  Adding linearly dependent moments to a GMM system leaves the estimator
+  and its asymptotic variance unchanged. Forbidden comparisons are therefore
+  redundant in both the homogeneous (Corollary~\ref{cor:redundancy}) and
+  heterogeneous cases.
+\end{remark}
 
 \subsubsection{The GMM Estimator}
 \label{sec:gmm_hetero_estimator}
 
-The GMM estimator for the CATT vector minimises the quadratic form
+The GMM estimator minimises the quadratic form over clean moments,
 \begin{equation}
   \hat{\boldsymbol{\beta}}
   \;=\;
@@ -1382,13 +1372,13 @@ The GMM estimator for the CATT vector minimises the quadratic form
   \hat{\boldsymbol{\phi}}(\boldsymbol{\beta}),
   \label{eq:gmm_h_obj}
 \end{equation}
-where $A$ is an $N_{2\times2}\times N_{2\times2}$ positive semi-definite
-weighting matrix. The first-order conditions yield the closed form
+where $A$ is an $N_c\times N_c$ positive semi-definite weighting matrix.
+The first-order conditions yield the closed form
 \begin{equation}
   \boxed{%
     \hat{\boldsymbol{\beta}}
     \;=\;
-    \bigl(Q_H'\,A\,Q_H\bigr)^{-1}Q_H'\,A\,\boldsymbol{\Delta},
+    \bigl(Q_c'\,A\,Q_c\bigr)^{-1}Q_c'\,A\,\boldsymbol{\Delta}_c,
   }
   \label{eq:gmm_h}
 \end{equation}
@@ -1399,115 +1389,81 @@ The asymptotic distribution satisfies
   \;\xrightarrow{d}\;
   \mathcal{N}\!\Bigl(
     \mathbf{0},\;
-    (Q_H'AQ_H)^{-1}Q_H'A\,\Omega_\Delta\,AQ_H(Q_H'AQ_H)^{-1}
+    (Q_c'AQ_c)^{-1}Q_c'A\,\Omega_c\,AQ_c(Q_c'AQ_c)^{-1}
   \Bigr),
   \label{eq:asy_h}
 \end{equation}
-where $\Omega_\Delta=\lim_{N\to\infty}N\cdot\mathrm{Var}[\boldsymbol{\Delta}]$.
-At the optimal $A=\Omega_\Delta^{-1}$ the sandwich simplifies to
-$(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}$.
+where $\Omega_c=\lim_{N\to\infty}N\cdot\mathrm{Var}[\boldsymbol{\Delta}_c]$
+is the asymptotic covariance of the clean DiD vector. At the optimal
+$A=\Omega_c^{-1}$ the sandwich simplifies to $(Q_c'\Omega_c^{-1}Q_c)^{-1}$.
 
 \subsubsection{Efficiency and Optimality}
 \label{sec:gmm_hetero_efficiency}
 
-By standard GMM theory, setting $A=\hat{\Omega}_\Delta^{-1}$ for any
-consistent estimator $\hat{\Omega}_\Delta$ yields the feasible optimal
-estimator. The following result shows that this choice is efficient within
-the full class of linear unbiased estimators of $\boldsymbol{\beta}$.
-
 \begin{proposition}[Efficiency of Optimal GMM under Heterogeneous Effects]
   \label{prop:gmm_hetero_opt}
-  Let $\mathcal{L}=\{L\boldsymbol{\Delta}: L\in\mathbb{R}^{N_\beta\times
-  N_{2\times2}},\; LQ_H=I_{N_\beta}\}$ denote the class of all linear
-  unbiased estimators of $\boldsymbol{\beta}$. The GMM estimator
-  \eqref{eq:gmm_h} with $A=\Omega_\Delta^{-1}$ achieves the minimum
-  asymptotic variance within $\mathcal{L}$:
+  Let $\mathcal{L}_c=\{L\boldsymbol{\Delta}_c: L\in\mathbb{R}^{N_\beta\times
+  N_c},\; LQ_c=I_{N_\beta}\}$ denote the class of all linear unbiased
+  estimators of $\boldsymbol{\beta}$ based on clean DiDs. The GMM estimator
+  \eqref{eq:gmm_h} with $A=\Omega_c^{-1}$ achieves the minimum asymptotic
+  variance within $\mathcal{L}_c$:
   \[
-    \mathrm{AsyVar}[L\boldsymbol{\Delta}]
+    \mathrm{AsyVar}[L\boldsymbol{\Delta}_c]
     \;\geq\;
-    (Q_H'\,\Omega_\Delta^{-1}\,Q_H)^{-1}
-    \qquad\text{for all }L\boldsymbol{\Delta}\in\mathcal{L},
+    (Q_c'\,\Omega_c^{-1}\,Q_c)^{-1}
+    \qquad\text{for all }L\boldsymbol{\Delta}_c\in\mathcal{L}_c,
   \]
   with equality if and only if
-  $L=(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}Q_H'\Omega_\Delta^{-1}$.
+  $L=(Q_c'\Omega_c^{-1}Q_c)^{-1}Q_c'\Omega_c^{-1}$.
 \end{proposition}
 
 \begin{proof}
-  Any $L\boldsymbol{\Delta}\in\mathcal{L}$ satisfies $LQ_H=I_{N_\beta}$
-  and has asymptotic variance $L\,\Omega_\Delta\,L'$. Writing
-  $L=L^*+(L-L^*)$ where
-  $L^*=(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}Q_H'\Omega_\Delta^{-1}$, the
-  constraint $LQ_H=I_{N_\beta}$ forces $(L-L^*)Q_H=\mathbf{0}$. Then
+  Any $L\boldsymbol{\Delta}_c\in\mathcal{L}_c$ satisfies $LQ_c=I_{N_\beta}$
+  and has asymptotic variance $L\,\Omega_c\,L'$. Write $L=L^*+(L-L^*)$
+  where $L^*=(Q_c'\Omega_c^{-1}Q_c)^{-1}Q_c'\Omega_c^{-1}$. The constraint
+  $LQ_c=I_{N_\beta}$ forces $(L-L^*)Q_c=\mathbf{0}$, so the cross-term
+  $(L-L^*)\Omega_c L^{*\prime}=(L-L^*)Q_c(Q_c'\Omega_c^{-1}Q_c)^{-1}
+  =\mathbf{0}$. Then
   \[
-    L\,\Omega_\Delta\,L'
+    L\,\Omega_c\,L'
     \;=\;
-    L^*\Omega_\Delta L^{*\prime}
-    + (L-L^*)\Omega_\Delta(L-L^*)'
+    L^*\Omega_c L^{*\prime}
+    + (L-L^*)\Omega_c(L-L^*)'
     \;\geq\;
-    L^*\Omega_\Delta L^{*\prime}
+    L^*\Omega_c L^{*\prime}
     \;=\;
-    (Q_H'\Omega_\Delta^{-1}Q_H)^{-1},
+    (Q_c'\Omega_c^{-1}Q_c)^{-1}.\qedhere
   \]
-  where the inequality holds because $\Omega_\Delta>0$ and the cross-term
-  vanishes: $(L-L^*)\Omega_\Delta L^{*\prime}
-  =(L-L^*)Q_H(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}=\mathbf{0}$.
 \end{proof}
-
-\begin{remark}
-  The efficiency bound $(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}$ is achieved by
-  the optimal GMM on clean moments alone. By the same algebraic identity
-  as Lemma~\ref{lem:identity}, every debiased forbidden moment
-  \eqref{eq:moment_forb_h} is an exact linear combination of three clean
-  never-treated moments:
-  \[
-    \hat{\phi}^{jm}_{g_l,g_l+k}(\boldsymbol{\beta})
-    \;=\;
-    \hat{\phi}^{\infty m}_{g_l,\,g_l+k}(\boldsymbol{\beta})
-    -\hat{\phi}^{\infty m'}_{g_e,\,g_l+k}(\boldsymbol{\beta})
-    +\hat{\phi}^{\infty m'}_{g_e,\,g_l-m}(\boldsymbol{\beta}),
-  \]
-  for any pre-lag $m'$, where $g_e=g_l-j$. Adding linearly dependent
-  moments to a GMM system does not change the estimator or its asymptotic
-  variance. The redundancy of forbidden comparisons therefore extends from
-  the homogeneous case (Corollary~\ref{cor:redundancy}) to the
-  heterogeneous case: the optimal GMM on clean moments achieves the same
-  efficiency as the $Q_H$ GMM on all DiDs.
-\end{remark}
 
 \subsubsection{Connection to Earlier Estimators}
 \label{sec:gmm_connection}
 
-Under heterogeneous effects, the three estimators of
-Section~\ref{sec:comparison} can be viewed as members of $\mathcal{L}$ that
-impose restrictions on the weighting matrix $A$.
+The estimators of Section~\ref{sec:comparison} are members of
+$\mathcal{L}_c$ that impose restrictions on the weighting matrix $A$.
 
 \paragraph{Callaway--Sant'Anna.}
-CS restricts to never-treated controls and uses only the $m=1$ pre-lag,
-equivalent to retaining only the rows of $Q_H$ with $c=\infty$ and $m=1$.
+CS restricts to never-treated controls and uses only the $m=1$ pre-lag.
 Each CATT is estimated from a single comparison $\hbeta^{\infty1}_{g,g+k}$,
-discarding the efficiency gains available from additional pre-period moments
-($m\geq2$). Forbidden comparisons need not be included separately: as shown
-in the Remark above, they are algebraically redundant given the clean moments.
+discarding the efficiency gains from additional pre-period moments ($m\geq2$)
+without any benefit from forbidden comparisons, which are redundant by
+Remark~\ref{rem:redund_hetero}.
 
 \paragraph{Gardner et al.\ (2024).}
 Gardner's CATT estimator $\hbeta^G_{g,g+k}=(g-1)^{-1}\sum_{m=1}^{g-1}
 \hbeta^{\infty m}_{g,g+k}$ uses all pre-lags with never-treated controls.
 Within each $(g,k)$ cell it assigns equal weight across pre-lags, which is
-optimal under spherical errors (Proposition~\ref{prop:gardner_opt}) but
-not under non-spherical errors where different pre-lags carry different
-amounts of orthogonal information. Since the forbidden comparisons are
-redundant, excluding them does not cost efficiency; the gap between Gardner
-and the optimal GMM arises entirely from sub-optimal within-cell weighting
-and the failure to exploit cross-moment serial covariances.
+optimal under spherical errors (Proposition~\ref{prop:gardner_opt}) but not
+under non-spherical errors. The gap between Gardner and the optimal GMM
+arises entirely from sub-optimal within-cell weighting and the failure to
+exploit cross-moment serial covariances.
 
 \paragraph{Optimal GMM.}
-Setting $A=\hat{\Omega}_\Delta^{-1}$ on the clean moment system achieves
-the efficiency bound of Proposition~\ref{prop:gmm_hetero_opt}. The gains
-relative to Gardner are concentrated in two configurations: (i) cohorts
-with many pre-treatment periods, where high-lag and low-lag comparisons
-carry substantially different orthogonal information; and (ii) panels with
-high serial persistence, where the equal pre-lag weight of Gardner
-misallocates precision across correlated moments.
+Setting $A=\hat{\Omega}_c^{-1}$ achieves the efficiency bound of
+Proposition~\ref{prop:gmm_hetero_opt}. Gains relative to Gardner are
+concentrated in cohorts with many pre-treatment periods and in panels with
+high serial persistence, where different pre-lags carry substantially
+different amounts of orthogonal information about the same CATT.
 
 %%%============================================================================
 \section{Discussion}
