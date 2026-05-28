@@ -1454,13 +1454,24 @@ the full class of linear unbiased estimators of $\boldsymbol{\beta}$.
 \end{proof}
 
 \begin{remark}
-  The optimal GMM exploits all $N_{2\times2}$ DiDs, including debiased
-  forbidden ones, through the off-diagonal structure of $Q_H$. Estimators
-  that discard forbidden comparisons by setting the corresponding rows of
-  $A$ to zero belong to $\mathcal{L}$ but use a strict subset of the
-  available moments; they are therefore weakly dominated by the optimal GMM,
-  with strict dominance whenever the discarded moments carry identifying
-  information orthogonal to the retained ones.
+  The efficiency bound $(Q_H'\Omega_\Delta^{-1}Q_H)^{-1}$ is achieved by
+  the optimal GMM on clean moments alone. By the same algebraic identity
+  as Lemma~\ref{lem:identity}, every debiased forbidden moment
+  \eqref{eq:moment_forb_h} is an exact linear combination of three clean
+  never-treated moments:
+  \[
+    \hat{\phi}^{jm}_{g_l,g_l+k}(\boldsymbol{\beta})
+    \;=\;
+    \hat{\phi}^{\infty m}_{g_l,\,g_l+k}(\boldsymbol{\beta})
+    -\hat{\phi}^{\infty m'}_{g_e,\,g_l+k}(\boldsymbol{\beta})
+    +\hat{\phi}^{\infty m'}_{g_e,\,g_l-m}(\boldsymbol{\beta}),
+  \]
+  for any pre-lag $m'$, where $g_e=g_l-j$. Adding linearly dependent
+  moments to a GMM system does not change the estimator or its asymptotic
+  variance. The redundancy of forbidden comparisons therefore extends from
+  the homogeneous case (Corollary~\ref{cor:redundancy}) to the
+  heterogeneous case: the optimal GMM on clean moments achieves the same
+  efficiency as the $Q_H$ GMM on all DiDs.
 \end{remark}
 
 \subsubsection{Connection to Earlier Estimators}
@@ -1472,33 +1483,31 @@ impose restrictions on the weighting matrix $A$.
 
 \paragraph{Callaway--Sant'Anna.}
 CS restricts to never-treated controls and uses only the $m=1$ pre-lag,
-equivalent to retaining a subset of the rows of $Q_H$ corresponding to
-$c=\infty$ and $m=1$. All rows for $m\geq2$ and all forbidden rows are
-implicitly assigned zero weight. Within the retained subset, each CATT is
-estimated from a single comparison $\hbeta^{\infty1}_{g,g+k}$. This discards
-two sources of information: the additional pre-period moments ($m\geq2$)
-and the debiased forbidden comparisons.
+equivalent to retaining only the rows of $Q_H$ with $c=\infty$ and $m=1$.
+Each CATT is estimated from a single comparison $\hbeta^{\infty1}_{g,g+k}$,
+discarding the efficiency gains available from additional pre-period moments
+($m\geq2$). Forbidden comparisons need not be included separately: as shown
+in the Remark above, they are algebraically redundant given the clean moments.
 
 \paragraph{Gardner et al.\ (2024).}
 Gardner's CATT estimator $\hbeta^G_{g,g+k}=(g-1)^{-1}\sum_{m=1}^{g-1}
-\hbeta^{\infty m}_{g,g+k}$ uses all pre-lags but only never-treated controls,
-corresponding to zeroing the rows of $Q_H$ for not-yet-treated and forbidden
-comparisons. Within the retained never-treated rows, each CATT block receives
-equal weight across pre-lags, which is optimal under spherical errors
-(Proposition~\ref{prop:gardner_opt}) but not under non-spherical errors.
-Forbidden comparisons are discarded; the optimal GMM retains them via
-debiasing and achieves weakly lower asymptotic variance by
-Proposition~\ref{prop:gmm_hetero_opt}.
+\hbeta^{\infty m}_{g,g+k}$ uses all pre-lags with never-treated controls.
+Within each $(g,k)$ cell it assigns equal weight across pre-lags, which is
+optimal under spherical errors (Proposition~\ref{prop:gardner_opt}) but
+not under non-spherical errors where different pre-lags carry different
+amounts of orthogonal information. Since the forbidden comparisons are
+redundant, excluding them does not cost efficiency; the gap between Gardner
+and the optimal GMM arises entirely from sub-optimal within-cell weighting
+and the failure to exploit cross-moment serial covariances.
 
 \paragraph{Optimal GMM.}
-Setting $A=\hat{\Omega}_\Delta^{-1}$ achieves the efficiency bound of
-Proposition~\ref{prop:gmm_hetero_opt}. The gains relative to Gardner are
-concentrated in three configurations: (i) cohorts with many pre-treatment
-periods, where high-lag and low-lag comparisons carry substantially different
-orthogonal information; (ii) panels with high serial persistence, where the
-equal pre-lag weight of Gardner misallocates precision across correlated
-moments; and (iii) settings where debiased forbidden comparisons contribute
-additional orthogonal variation that clean comparisons do not span.
+Setting $A=\hat{\Omega}_\Delta^{-1}$ on the clean moment system achieves
+the efficiency bound of Proposition~\ref{prop:gmm_hetero_opt}. The gains
+relative to Gardner are concentrated in two configurations: (i) cohorts
+with many pre-treatment periods, where high-lag and low-lag comparisons
+carry substantially different orthogonal information; and (ii) panels with
+high serial persistence, where the equal pre-lag weight of Gardner
+misallocates precision across correlated moments.
 
 %%%============================================================================
 \section{Discussion}
@@ -1535,14 +1544,14 @@ formula~\eqref{eq:bias_formula} suggest a natural taxonomy:
     Section~\ref{sec:comparison} compares CS and Gardner in detail along the
     pre-lag and event-time dimensions of the period-specific representation.
 
-  \item \textbf{Optimal GMM} (Section~\ref{sec:gmm}): under homogeneous
-    effects, uses only clean moments with $A=\hat{\Omega}_\phi^{-1}$ to
-    minimise asymptotic variance (Section~\ref{sec:gmm_homog}). Under
-    heterogeneous effects, extends the moment set to include all $2\times2$
-    DiDs---debiasing forbidden comparisons via the modified incidence matrix
-    $Q_H$---and achieves efficiency within the class of all linear unbiased
-    estimators (Proposition~\ref{prop:gmm_hetero_opt},
-    Section~\ref{sec:gmm_hetero}).
+  \item \textbf{Optimal GMM} (Section~\ref{sec:gmm}): uses clean moments
+    with $A=\hat{\Omega}_\phi^{-1}$ to minimise asymptotic variance in both
+    the homogeneous (Section~\ref{sec:gmm_homog}) and heterogeneous
+    (Section~\ref{sec:gmm_hetero}) cases. Forbidden comparisons are
+    redundant by Corollary~\ref{cor:redundancy} and its heterogeneous
+    extension (Remark after Proposition~\ref{prop:gmm_hetero_opt});
+    efficiency gains over Gardner arise solely from optimal weighting across
+    pre-lags and exploitation of cross-moment serial covariances.
 \end{itemize}
 
 \subsection{Summary}
