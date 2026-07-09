@@ -25,7 +25,7 @@ with heterogeneous `beta_g ∈ {-16,-12,-10,-9,-2}`, `r_g ∈ {0.01,0.04,0.08,0.
 
 | Script | Error structure | Paper |
 |---|---|---|
-| `hetcov_dgp2_n300_r09_het_01_06_copy.R` | AR(1), ρ ∈ {0, .1, .3, .5, .7, .9} | Table 1 |
+| `homcov_dgp1_topelitz.R` | AR(1), ρ ∈ {0, .1, .3, .5, .7, .9} | Table 1 |
 | `hetcov_dgp2_arbitrary_serial.R` | Arbitrary serial (positive mixture of AR kernels), swept low / medium / high | Table 3 |
 | `hetcov_dgp1_cross_sectional_sweep.R` | Cross-sectional common-factor, σ_Φ × ρ (15 cells) | Tables 4–5 |
 
